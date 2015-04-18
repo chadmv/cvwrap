@@ -23,6 +23,8 @@ const char* CVWrapCmd::kImportFlagShort = "-im";
 const char* CVWrapCmd::kImportFlagLong = "-import";
 const char* CVWrapCmd::kBindingFlagShort = "-b";
 const char* CVWrapCmd::kBindingFlagLong = "-binding";
+const char* CVWrapCmd::kUVSetFlagShort = "-uv";
+const char* CVWrapCmd::kUVSetFlagLong = "-uvSet";
 const char* CVWrapCmd::kHelpFlagShort = "-h";
 const char* CVWrapCmd::kHelpFlagLong = "-help";
 
@@ -39,10 +41,10 @@ void DisplayHelp() {
   help += "-export (-ex):       String     Path to a file to export the binding to.\n"; 
   help += "-import (-im):       String     Path to a file to import the binding from.\n"; 
   help += "-binding (-b):       String     Path to a file to import the binding from on creation.\n"; 
+  help += "-uvSet (-uv):        String     The UV set to use in the bind process.\n"; 
   help += "-help (-h)           N/A        Display this text.\n";
   MGlobal::displayInfo(help);
 }
-
 
 
 CVWrapCmd::CVWrapCmd()
@@ -142,6 +144,10 @@ MStatus CVWrapCmd::GatherCommandArguments(const MArgList& args) {
   if (argData.isFlagSet(kBindingFlagShort)) {
     useBinding_ = true;
     filePath_ = argData.flagArgumentString(kBindingFlagShort, 0, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+  }
+  if (argData.isFlagSet(kUVSetFlagShort)) {
+    uvset_ = argData.flagArgumentString(kUVSetFlagShort, 0, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
   }
   argData.getObjects(selectionList_);
@@ -256,41 +262,40 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
     CHECK_MSTATUS_AND_RETURN_IT(status);
     status = plug.setBool(false);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-
-    status = GetShapeNode(pathBindMesh);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
   }
+  status = GetShapeNode(pathBindMesh);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
   MFnDagNode fnBindMesh(pathBindMesh, &status);
   CHECK_MSTATUS_AND_RETURN_IT(status);
   MPlug plugBindMessage = fnBindMesh.findPlug("message", false, &status);   
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
   // Store Nurbs surface attributes
-  if (pathDriven_.node().apiType() == MFn::kNurbsSurface)
-  {
-      MFnNurbsSurface fnSurface(pathDriven_, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      int cvsInU = fnSurface.numCVsInU();
-      MPlug plugCVsInU(oWrapNode_, cvWrap::aCVsInU);
-      plugCVsInU.setInt(cvsInU);
+  if (pathDriven_.node().apiType() == MFn::kNurbsSurface) {
+    MFnNurbsSurface fnSurface(pathDriven_, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    int cvsInU = fnSurface.numCVsInU();
+    MPlug plugCVsInU(oWrapNode_, cvWrap::aCVsInU);
+    plugCVsInU.setInt(cvsInU);
 
-      int cvsInV = fnSurface.numCVsInV();
-      MPlug plugCVsInV(oWrapNode_, cvWrap::aCVsInV);
-      plugCVsInV.setInt(cvsInV);
+    int cvsInV = fnSurface.numCVsInV();
+    MPlug plugCVsInV(oWrapNode_, cvWrap::aCVsInV);
+    plugCVsInV.setInt(cvsInV);
 
-      int formInU = fnSurface.formInU();
-      MPlug plugFormInU(oWrapNode_, cvWrap::aFormInU);
-      plugFormInU.setInt(formInU);
+    int formInU = fnSurface.formInU();
+    MPlug plugFormInU(oWrapNode_, cvWrap::aFormInU);
+    plugFormInU.setInt(formInU);
 
-      int formInV = fnSurface.formInV();
-      MPlug plugFormInV(oWrapNode_, cvWrap::aFormInV);
-      plugFormInV.setInt(formInV);
+    int formInV = fnSurface.formInV();
+    MPlug plugFormInV(oWrapNode_, cvWrap::aFormInV);
+    plugFormInV.setInt(formInV);
 
-      int degreeV = fnSurface.degreeV();
-      MPlug plugDegreeV(oWrapNode_, cvWrap::aDegreeV);
-      plugDegreeV.setInt(degreeV);
+    int degreeV = fnSurface.degreeV();
+    MPlug plugDegreeV(oWrapNode_, cvWrap::aDegreeV);
+    plugDegreeV.setInt(degreeV);
   }
 
+  // Connect the driver and bind meshes to the wrap deformer
   MDGModifier dgMod;
   dgMod.connect(plugDriverMesh, plugDriverGeo);
   dgMod.connect(plugBindMessage, plugBindMesh);
@@ -299,7 +304,6 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
 
   return MS::kSuccess;
 }
-
 
 
 MStatus CVWrapCmd::GetLatestWrapNode() {
@@ -330,383 +334,158 @@ MStatus CVWrapCmd::GetLatestWrapNode() {
 
 
 MStatus CVWrapCmd::CalculateBinding() {
-    MStatus status;
-    MMeshIntersector intersector;
-    MObject oDriver = pathDriver_.node();
-    MMatrix driverMatrix = pathDriver_.inclusiveMatrix();
-    status = intersector.create(oDriver, driverMatrix);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+  MStatus status;
+  MMeshIntersector intersector;
+  MObject oDriver = pathDriver_.node();
+  MMatrix driverMatrix = pathDriver_.inclusiveMatrix();
+  status = intersector.create(oDriver, driverMatrix);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
 
-    MFnMesh fnDriverMesh(pathDriver_, &status);
+  MFnMesh fnDriverMesh(pathDriver_, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  if (uvset_.length() == 0) {
+    // If no UV set was specified use the current UV set.
+    status = fnDriverMesh.getCurrentUVSetName(uvset_);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    std::vector<std::set<int> > adjacency;
-    status = getAdjacency(pathDriver_, adjacency);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+  }
 
-    MPointArray points;
-    MFloatVectorArray normals;
-    fnDriverMesh.getPoints(points, MSpace::kWorld);
-    fnDriverMesh.getVertexNormals(false, normals, MSpace::kWorld);
+  // We need the adjacency of each vertex in order to crawl the mesh.
+  std::vector<std::set<int> > adjacency;
+  status = GetAdjacency(pathDriver_, adjacency);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
 
-    MPoint pt, closestPoint;
+  MPointArray points;
+  MFloatVectorArray normals, tangents;
+  fnDriverMesh.getPoints(points, MSpace::kWorld);
+  fnDriverMesh.getVertexNormals(false, normals, MSpace::kWorld);
+  fnDriverMesh.getTangents(tangents, MSpace::kWorld);
+
+  MFnSingleIndexedComponent fnComp;
+  MFnComponentListData fnCompData;
+  
+  MPlug plugSampleWeights(oWrapNode_, cvWrap::aSampleWeights);
+  MPlug plugSampleVerts(oWrapNode_, cvWrap::aSampleComponents);
+  MPlug plugSampleBindMatrix(oWrapNode_, cvWrap::aBindMatrix);
+  MPlug plugTriangleVerts(oWrapNode_, cvWrap::aTriangleVerts);
+  MPlug plugBarycentricWeights(oWrapNode_, cvWrap::aBarycentricWeights);
+  MPlug plugBindInfoElement;
+  MFnNumericData fnNumericData;
+  MFnMatrixData fnMatrixData;
+  int triangleVertices[3];
+  MItGeometry itGeo(pathDriven_, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MPointArray inputPoints;
+  itGeo.allPositions(inputPoints, MSpace::kWorld);
+
+  // Start progress bar
+  StartProgress("Binding wrap...", itGeo.count());
+
+  for (unsigned int i = 0; i < inputPoints.length(); ++i) {
+    // We need to calculate a bind matrix for each component.
+    // The closest point will be the origin of the coordinate system.
+    // The weighted normal of the vertices in the sample radius will be one axis.
+    // The tangent at the closest point will be another axis.
+
+    // Get the closest point and faceId.  The close
     MPointOnMesh pointOnMesh;
-    MIntArray vertexList, sampleIds;
-    int faceId, triangleId;
-    MFnSingleIndexedComponent fnComp;
-    MFnComponentListData fnCompData;
-    MSelectionList selectionList;
-    MDagPath pathTemp;
-    MObject oComp, oCompData, oNumericData, oMatrixData, oDoubleData;
-    MDoubleArray weights, normalizedWeights;
-    MPoint origin, localPoint;
-    MVector normal, up;
-    MPlug plugSampleWeights(oWrapNode_, cvWrap::aSampleWeights);
-    MPlug plugSampleVerts(oWrapNode_, cvWrap::aSampleComponents);
-    MPlug plugSampleBindMatrix(oWrapNode_, cvWrap::aBindMatrix);
-    MPlug plugTriangleVerts(oWrapNode_, cvWrap::aTriangleVerts);
-    MPlug plugBarycentricWeights(oWrapNode_, cvWrap::aBarycentricWeights);
-    MPlug plugBindInfoElement;
-    MFnNumericData fnNumericData;
-    MFnMatrixData fnMatrixData;
+    status = intersector.getClosestPoint(inputPoints[i], pointOnMesh);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    int faceId = pointOnMesh.faceIndex();
+    int triangleId = pointOnMesh.triangleIndex();
+    // Put point in world space so we can calculate the proper bind matrix.
+    MPoint closestPoint = MPoint(pointOnMesh.getPoint()) * driverMatrix;
+
+    // Get vertices of closest face so we can crawl out from them.
+    MIntArray vertexList;
+    status = fnDriverMesh.getPolygonVertices(faceId, vertexList);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+
+    // Crawl the surface to find all the vertices within the sample radius.
+    std::map<int, double> distances;
+    vertexList.clear();
+    CrawlSurface(closestPoint, vertexList, points, radius_, adjacency, distances);
+
+    // Calculate the weight values per sampled vertex
+    MIntArray sampleIds;
+    MDoubleArray weights;
+    CalculateSampleWeights(distances, radius_, sampleIds, weights);
+
+    // Get barycentric coordinates of closestPoint
+    status = fnDriverMesh.getPolygonTriangleVertices(faceId, triangleId, triangleVertices);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    BaryCoords coords;
+    GetBarycentricCoordinates(closestPoint, points[triangleVertices[0]],
+                              points[triangleVertices[1]], points[triangleVertices[2]],
+                              coords);
+
+    // Calculate the up vector from the tangents
+    MVector up;
+    for (int j = 0; j < 3; ++j) {
+      int tangentId = fnDriverMesh.getTangentId(faceId, triangleVertices[j]);
+      up += tangents[tangentId] * coords[j];
+    }
+    up.normalize();
+
+    // Calculate the weighted normal of the coordinate system
+    MVector normal;
+    for (unsigned int j = 0; j < weights.length(); j++) {
+      normal += MVector(normals[sampleIds[j]]) * weights[j];
+    }
+    normal.normalize();
+
+    // Store sample vert ids.
+    MObject oComp = fnComp.create(MFn::kMeshVertComponent, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    status = fnComp.addElements(sampleIds);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MObject oCompData = fnCompData.create();
+    fnCompData.add(oComp);
+    plugSampleVerts.elementByLogicalIndex(i, &status).setMObject(oCompData);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+
+    // Store sample weights
+    MFnDoubleArrayData fnDoubleData;
+    MObject oDoubleData = fnDoubleData.create(weights, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    plugSampleWeights.elementByLogicalIndex(i, &status).setMObject(oDoubleData);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+
+    // Store bind matrix
     MMatrix matrix;
-    MItGeometry itGeo(pathDriven_, &status);
+    CreateMatrix(closestPoint, normal, up, matrix);
+    matrix = matrix.inverse();
+    MObject oMatrixData = fnMatrixData.create(matrix, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    int triangleVertices[3];
-    float a, b, c;
-    double totalWeight;
-
-    // Start progress bar
-    StartProgress("Binding wrap...", itGeo.count());
-
-    MPointArray inputPoints;
-    itGeo.allPositions(inputPoints, MSpace::kWorld);
-
-    int ii = 0;
-    std::map<int, double>::iterator itDistance;
-    for (itGeo.reset(); !itGeo.isDone(); itGeo.next(), ii++) {
-      // Get closest point and faceId
-      pt = inputPoints[ii];
-      status = intersector.getClosestPoint(pt, pointOnMesh);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      closestPoint = MPoint(pointOnMesh.getPoint()) * driverMatrix;
-      faceId = pointOnMesh.faceIndex();
-      triangleId = pointOnMesh.triangleIndex();
-
-      // Get vertices of closest triangle
-      vertexList.clear();
-      status = fnDriverMesh.getPolygonTriangleVertices(faceId, triangleId, triangleVertices);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Get barycentric coordinates of closestPoint
-      getBarycentricCoordinates(closestPoint,
-              points[triangleVertices[0]],
-              points[triangleVertices[1]],
-              points[triangleVertices[2]],
-              a, b, c);
-
-      // Get vertices of closest face
-      vertexList.clear();
-      status = fnDriverMesh.getPolygonVertices(faceId, vertexList);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Crawl surface to get sample weights
-      totalWeight = 0.0;
-      std::map<int, double> distances;
-      for (unsigned int i = 0; i < vertexList.length(); ++i)
-      {
-          status = crawlSurface(vertexList[i], points, distances,
-                  0.0, closestPoint, radius_, adjacency);
-          CHECK_MSTATUS_AND_RETURN_IT(status);
-      }
-
-      calculateSampleWeights(distances, sampleIds, weights, normalizedWeights,
-              closestPoint, points, totalWeight);
-
-      if (distances.size() < vertexList.length() || totalWeight == 0.0)
-      {
-          distances.clear();
-          for (unsigned int i = 0; i < vertexList.length(); ++i)
-          {
-              distances[vertexList[i]] = closestPoint.distanceTo(points[vertexList[i]]);
-              //distances[vertexList[i]] = distanceSquared(closestPoint, points[vertexList[i]]);
-          }
-          calculateSampleWeights(distances, sampleIds, weights, normalizedWeights,
-                  closestPoint, points, totalWeight);
-          if (totalWeight == 0.0)
-          {
-              // Just take equal weight from each point
-              sampleIds.setLength(vertexList.length());
-              weights.setLength(vertexList.length());
-              normalizedWeights.setLength(vertexList.length());
-              double w = 1.0 / vertexList.length();
-              for (unsigned int i = 0; i < vertexList.length(); ++i)
-              {
-                  sampleIds[i] = vertexList[i];
-                  weights[i] = w;
-                  normalizedWeights[i] = w;
-              }
-          }
-      }
-
-      // Calculate origin
-      origin = closestPoint;
-
-      // Calculate normal and up
-      normal = MVector::zero;
-      up = MVector::zero;
-      for (unsigned int i = 0; i < weights.length(); i++)
-      {
-          normal += MVector(normals[sampleIds[i]]) * normalizedWeights[i];
-          up += (points[sampleIds[i]] - origin) * normalizedWeights[i];
-      }
-
-      // Adjust up if it's parallel to normal or if it's zero length
-      if (up * normal == 1.0 || up.length() < 0.0001)
-      {
-          // Sort weights low to high.
-          std::vector<Sortable> sortedWeights;
-          sortedWeights.resize(weights.length());
-          for (unsigned int i = 0; i < weights.length(); i++)
-          {
-              sortedWeights[i].weight = weights[i];
-              sortedWeights[i].index = sampleIds[i];
-              sortedWeights[i].normalizedWeight = normalizedWeights[i];
-          }
-          cvWrap::quickSort(0, weights.length() - 1, sortedWeights);
-
-          for (unsigned int i = 0; i < weights.length(); i++)
-          {
-              if (up * normal != 1.0 && up.length() > 0.0001)
-              {
-                  break;
-              }
-              up -= (points[sortedWeights[i].index] - origin) * sortedWeights[i].normalizedWeight;
-          }
-      }
-      up.normalize();
-      normal.normalize();
-
-      // Store sample vert ids.
-      oComp = fnComp.create(MFn::kMeshVertComponent, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      status = fnComp.addElements(sampleIds);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      oCompData = fnCompData.create();
-      fnCompData.add(oComp);
-      plugSampleVerts.elementByLogicalIndex(itGeo.index(), &status).setMObject(oCompData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Store sample weights
-      MFnDoubleArrayData fnDoubleData;
-      oDoubleData = fnDoubleData.create(weights, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      plugSampleWeights.elementByLogicalIndex(itGeo.index(), &status).setMObject(oDoubleData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Store bind matrix
-      cvWrap::createMatrix(matrix, origin, normal, up);
-      matrix = matrix.inverse();
-      oMatrixData = fnMatrixData.create(matrix, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      plugSampleBindMatrix.elementByLogicalIndex(itGeo.index(), &status).setMObject(oMatrixData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Store triangle vertices
-      oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      status = fnNumericData.setData3Int(triangleVertices[0], triangleVertices[1], triangleVertices[2]);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      plugTriangleVerts.elementByLogicalIndex(itGeo.index(), &status).setMObject(oNumericData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Store barycentric coordinates
-      oNumericData = fnNumericData.create(MFnNumericData::k3Float, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      status = fnNumericData.setData3Float(a, b, c);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      plugBarycentricWeights.elementByLogicalIndex(itGeo.index(), &status).setMObject(oNumericData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Increment the progress bar on every 250 verts because updating the UI is slow.
-      if (itGeo.index() % 250 == 0 && itGeo.index() != 0) {
-        StepProgress(250);
-        if (ProgressCancelled()) {
-          break;
-        }
-      }
-    }
-
-    EndProgress();
-    return MS::kSuccess;
-}
-
-
-void CVWrapCmd::getBarycentricCoordinates(MPoint& P, MPoint& A, MPoint& B, MPoint& C, float& a, float& b, float& c)
-{
-    // Compute the normal of the triangle
-    MVector N = (B - A) ^ (C - A);
-    MVector unitN = N.normal();
-
-    // Compute twice area of triangle ABC
-    double areaABC = unitN * N;
-
-    if (areaABC == 0.0f)
-    {
-        a = 0.33f;
-        b = 0.33f;
-        c = 0.33f;
-        return;
-    }
-
-    // Compute a
-    double areaPBC = unitN * ((B - P) ^ (C - P));
-    a = (float)(areaPBC / areaABC);
-
-    // Compute b
-    double areaPCA = unitN * ((C - P) ^ (A - P));
-    b = (float)(areaPCA / areaABC);
-
-    // Compute c
-    c = 1.0f - a - b;
-}
-
-
-MStatus CVWrapCmd::getAdjacency(MDagPath& pathMesh, std::vector<std::set<int> >& adjacency)
-{
-    MStatus status;
-    // Get mesh adjacency
-    MIntArray faces, vertices;
-    MObject oNull = MObject::kNullObj;
-    MItMeshVertex itVert(pathMesh, oNull, &status);
+    plugSampleBindMatrix.elementByLogicalIndex(i, &status).setMObject(oMatrixData);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    MFnMesh fnMesh(pathMesh, &status);
+
+    // Store triangle vertices
+    MObject oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    adjacency.resize(itVert.count());
-    for (; !itVert.isDone(); itVert.next())
-    {
-        faces.clear();
-        status = itVert.getConnectedFaces(faces);
-        adjacency[itVert.index()].clear();
-        for (unsigned int j = 0; j < faces.length(); ++j)
-        {
-            vertices.clear();
-            fnMesh.getPolygonVertices(faces[j], vertices);
-            for (unsigned int k = 0; k < vertices.length(); ++k)
-            {
-                if (vertices[k] != itVert.index())
-                {
-                    adjacency[itVert.index()].insert(vertices[k]);
-                }
-            }
-        }
-    }
-    return MS::kSuccess;
-}
+    status = fnNumericData.setData3Int(triangleVertices[0], triangleVertices[1], triangleVertices[2]);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    plugTriangleVerts.elementByLogicalIndex(i, &status).setMObject(oNumericData);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
 
+    // Store barycentric coordinates
+    oNumericData = fnNumericData.create(MFnNumericData::k3Float, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    status = fnNumericData.setData3Float(coords[0], coords[1], coords[2]);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    plugBarycentricWeights.elementByLogicalIndex(i, &status).setMObject(oNumericData);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
 
-/**
-    @brief Recursive function that crawls the surface to find all the points
-    within the projected brush radius.
+    // Increment the progress bar on every 250 verts because updating the UI is slow.
+    if (i % 250 == 0 && i != 0) {
+      StepProgress(250);
+      if (ProgressCancelled()) {
+        break;
+      }
+    }
+  }
 
-    @param[in] geom_index Geometry index.
-    @param[in] vertex_index Current vertex index to crawl.
-    @param[out] distances Storage for the distances of the crawled points.
-    @param[in] source_distance Previous calculated distance.
-    @param[in] source_point Previous crawled point.
-
-    @return MStatus
- */
-MStatus CVWrapCmd::crawlSurface(int vertexIndex,
-        MPointArray& points, std::map<int, double>& distances, double sourceDistance,
-        MPoint& sourcePoint, double maxDistance, std::vector<std::set<int> >& adjacency)
-{
-    MStatus status;
-    if (distances.size() > 50)
-    {
-        return MS::kSuccess;
-    }
-    if (sourceDistance >= maxDistance)
-    {
-        return MS::kSuccess;
-    }
-
-    MPoint& pt = points[vertexIndex];
-    sourceDistance += sourcePoint.distanceTo(pt);
-    //sourceDistance += distanceSquared(sourcePoint, pt);
-    if (sourceDistance >= maxDistance)
-    {
-        return MS::kSuccess;
-    }
-    if (sourceDistance <= distances[vertexIndex] || distances[vertexIndex] < 0.0001)
-    {
-        distances[vertexIndex] = sourceDistance;
-    }
-    else
-    {
-        // A smaller distance is already stored so we don't want to crawl
-        // from this vertex any further.
-        return MS::kSuccess;
-    }
-
-    // Crawl the connected vertices
-    std::set<int>::iterator itAdjacency;
-    for (itAdjacency = adjacency[vertexIndex].begin();
-            itAdjacency != adjacency[vertexIndex].end();
-            itAdjacency++)
-    {
-        status = crawlSurface(*itAdjacency, points, 
-                distances, sourceDistance, pt, maxDistance, adjacency);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-    }
-
-    return MS::kSuccess;
-}
-
-
-void CVWrapCmd::calculateSampleWeights(std::map<int, double>& distances,
-        MIntArray& sampleIds,
-        MDoubleArray& weights,
-        MDoubleArray& normalizedWeights,
-        MPoint& closestPoint,
-        MPointArray& points,
-        double& totalWeight)
-{
-    std::map<int, double>::iterator itDistance;
-    unsigned int length = (unsigned int)distances.size();
-    sampleIds.setLength(length);
-    weights.setLength(length);
-    normalizedWeights.setLength(length);
-    int ii = 0;
-    totalWeight = 0.0;
-    double maxDistance = 0.0;
-    for (itDistance = distances.begin();
-            itDistance != distances.end();
-            itDistance++, ii++)
-    {
-        sampleIds[ii] = itDistance->first;
-        weights[ii] = closestPoint.distanceTo(points[sampleIds[ii]]);
-        //weights[ii] = distanceSquared(closestPoint, points[sampleIds[ii]]);
-        if (weights[ii] > maxDistance)
-        {
-            maxDistance = weights[ii];
-        }
-    }
-    ii = 0;
-    for (itDistance = distances.begin();
-            itDistance != distances.end();
-            itDistance++, ii++)
-    {
-        weights[ii] = 1.0 - (itDistance->second / maxDistance);
-        totalWeight += weights[ii];
-    }
-    if (totalWeight == 0.0)
-    {
-        return;
-    }
-    for (unsigned int i = 0; i < weights.length(); i++)
-    {
-        normalizedWeights[i] = weights[i] / totalWeight;
-    }
+  EndProgress();
+  return MS::kSuccess;
 }
 
 
@@ -747,19 +526,18 @@ MStatus CVWrapCmd::GetExistingBindMesh(MDagPath &pathBindMesh) {
 }
 
 
-MStatus CVWrapCmd::undoIt()
-{
-    MStatus status;
-    status = dgMod_.undoIt();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+MStatus CVWrapCmd::undoIt() {
+  MStatus status;
+  status = dgMod_.undoIt();
+  CHECK_MSTATUS_AND_RETURN_IT(status);
 
-    for (unsigned int i = 0; i < m_createdNodes.length(); i++)
-    {
-        MGlobal::executeCommand("delete " + m_createdNodes[i]);
-    }
-    m_createdNodes.clear();
+  for (unsigned int i = 0; i < m_createdNodes.length(); i++)
+  {
+      MGlobal::executeCommand("delete " + m_createdNodes[i]);
+  }
+  m_createdNodes.clear();
 
-    return MS::kSuccess;
+  return MS::kSuccess;
 }
 
 

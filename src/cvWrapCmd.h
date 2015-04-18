@@ -78,26 +78,16 @@ class CVWrapCmd : public MPxCommand {
   const static char* kBindingFlagLong;
 
   /**
+    The UV set to use in the binding process.
+  */
+  const static char* kUVSetFlagShort;  
+  const static char* kUVSetFlagLong;
+
+  /**
     Displays help.
   */
   const static char* kHelpFlagShort;
   const static char* kHelpFlagLong;
-
-    static void getBarycentricCoordinates( MPoint& P,
-            MPoint& A, MPoint& B, MPoint& C,
-            float& a, float& b, float& c );
-    static MStatus getAdjacency( MDagPath& pathMesh, std::vector<std::set<int> >& adjacency );
-    static MStatus crawlSurface( int vertexIndex,
-            MPointArray& points, std::map<int, double>& distances, double sourceDistance,
-            MPoint& sourcePoint, double maxDistance, std::vector<std::set<int> >& adjacency );
-    static void calculateSampleWeights( std::map<int, double>& distances,
-            MIntArray& sampleIds,
-            MDoubleArray& weights,
-            MDoubleArray& normalizedWeights,
-            MPoint& closestPoint,
-            MPointArray& points,
-            double& totalWeight );
-
 
  private:
   /**
@@ -121,6 +111,9 @@ class CVWrapCmd : public MPxCommand {
   */
   MStatus GetLatestWrapNode();
 
+  /**
+    Calculates the binding data for the wrap deformer to work.
+  */
   MStatus CalculateBinding();
     
   /**
@@ -129,7 +122,6 @@ class CVWrapCmd : public MPxCommand {
     @param[out] pathBindMesh Storage for path to an existing bind mesh
   */
   MStatus GetExistingBindMesh(MDagPath &pathBindMesh);
-
 
   /**
     Exports the binding information to disk.
@@ -150,6 +142,7 @@ class CVWrapCmd : public MPxCommand {
   MStatus readAttribute( std::ifstream &out, MMatrix &attribute );
 
   MString name_;  /**< Name of cvWrap node to create. */
+  MString uvset_;  /**< The UV set to use in the binding process. */
   double radius_;  /**< Binding sample radius. */
   CommandMode command_;
   MString filePath_;
