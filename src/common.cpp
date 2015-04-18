@@ -44,8 +44,11 @@ void EndProgress() {
 
 
 bool IsShapeNode(MDagPath& path) {
-  return path.hasFn(MFn::kMesh) || path.hasFn(MFn::kNurbsCurve) || path.hasFn(MFn::kNurbsSurface);
+  return path.node().hasFn(MFn::kMesh) ||
+         path.node().hasFn(MFn::kNurbsCurve) ||
+         path.node().hasFn(MFn::kNurbsSurface);
 }
+
 
 MStatus GetShapeNode(MDagPath& path) {
   MStatus status;
