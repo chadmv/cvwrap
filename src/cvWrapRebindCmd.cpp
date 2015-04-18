@@ -2,6 +2,7 @@
 #include "cvWrapCmd.h"
 #include "cvWrapRebindCmd.h"
 #include "cvWrapDeformer.h"
+#include "common.h"
 
 
 cvWrapRebindCmd::cvWrapRebindCmd()

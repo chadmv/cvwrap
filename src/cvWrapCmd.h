@@ -26,8 +26,7 @@
 */
 class CVWrapCmd : public MPxCommand {							
  public:
-  enum CommandMode { kCommandCreate, kCommandExport, kCommandImport, kCommandNewBindMesh,
-                     kCommandHelp };
+  enum CommandMode { kCommandCreate, kCommandExport, kCommandImport, kCommandHelp };
   CVWrapCmd();							
 	virtual MStatus	doIt(const MArgList&);
 	virtual MStatus	undoIt();
@@ -50,6 +49,13 @@ class CVWrapCmd : public MPxCommand {
   const static char* kRadiusFlagShort;
   const static char* kRadiusFlagLong;
 
+  /**
+    Specifies that a new bind mesh should be created.  The bind mesh is only used for rebinding
+    vertices and can be deleted at any time.  Sometimes, artists may want to wrap different
+    geometry with the same mesh.  By default the command will reuse the same bind mesh for a driver,
+    but if new geometry is being wrapped at a different pose, a new bind mesh should be created
+    in order to correctly rebind.
+  */
   const static char* kNewBindMeshFlagShort;
   const static char* kNewBindMeshFlagLong;
 
@@ -92,10 +98,6 @@ class CVWrapCmd : public MPxCommand {
             MPointArray& points,
             double& totalWeight );
 
-    MStatus getExistingBindMesh( MObject& oDriver, MDagPath &pathBindMesh );
-    static MStatus getDagPath( MString& name, MDagPath& pathNode );
-    static MStatus deleteIntermediateObjects( MDagPath& pathNode );
-    static double distanceSquared( const MPoint& p1, const MPoint& p2 );
 
  private:
   /**
@@ -120,6 +122,13 @@ class CVWrapCmd : public MPxCommand {
   MStatus GetLatestWrapNode();
 
   MStatus CalculateBinding();
+    
+  /**
+    Gets the MDagPath of any existing bind wrap mesh so we don't have to duplicate it for each
+    new wrap.
+    @param[out] pathBindMesh Storage for path to an existing bind mesh
+  */
+  MStatus GetExistingBindMesh(MDagPath &pathBindMesh);
 
 
   /**
@@ -146,6 +155,7 @@ class CVWrapCmd : public MPxCommand {
   MString filePath_;
   bool m_edit;
   bool useBinding_;
+  bool newBindMesh_;
   MSelectionList selectionList_;  /**< Selected command input nodes. */
   MObject oWrapNode_;  /**< MObject to the cvWrap node in focus. */
   MDagPath pathDriver_;  /**< Path to the shape wrapping the other shape. */
@@ -156,31 +166,6 @@ class CVWrapCmd : public MPxCommand {
   
 };	
 
-/**
-  Helper function to start a new progress bar.
-  @param[in] title Status title.
-  @param[in] count Progress bar maximum count.
-*/
-void StartProgress(const MString& title, unsigned int count);
 
-
-/**
-  Helper function to increase the progress bar by the specified amount.
-  @param[in] step Step amount.
-*/
-void StepProgress(int step);
-
-
-/**
-  Check if the progress has been cancelled.
-  @return true if the progress has been cancelled.
-*/
-bool ProgressCancelled();
-
-
-/**
-  Ends any running progress bar.
-*/
-void EndProgress();
 
 #endif

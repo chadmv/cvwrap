@@ -1,5 +1,6 @@
 #include "cvWrapCmd.h"
 #include "cvWrapDeformer.h"
+#include "common.h"
 
 #include <maya/MArgDatabase.h>
 #include <maya/MFnMatrixData.h>
@@ -42,88 +43,14 @@ void DisplayHelp() {
   MGlobal::displayInfo(help);
 }
 
-void StartProgress(const MString& title, unsigned int count) {
-  if (MGlobal::mayaState() == MGlobal::kInteractive) {
-    MString message = "progressBar -e -bp -ii true -st \"";
-    message += title;
-    message += "\" -max ";
-    message += count;
-    message += " $gMainProgressBar;";
-    MGlobal::executeCommand(message);
-  }
-}
-
-
-void StepProgress(int step) {
-  if (MGlobal::mayaState() == MGlobal::kInteractive) {
-    MString message = "progressBar -e -s ";
-    message += step;
-    message += " $gMainProgressBar;";
-    MGlobal::executeCommand(message);
-  }
-}
-
-
-bool ProgressCancelled() {
-  if (MGlobal::mayaState() == MGlobal::kInteractive) {
-    int cmdResult = 0;
-    MGlobal::executeCommand("progressBar -query -isCancelled $gMainProgressBar", cmdResult);
-    return cmdResult != 0;
-  }
-  return false;
-}
-
-
-void EndProgress() {
-  if (MGlobal::mayaState() == MGlobal::kInteractive) {
-    MGlobal::executeCommand("progressBar -e -ep $gMainProgressBar;");
-  }
-}
-
-
-/**
-  Ensures that the given dag path points to a non-intermediate shape node.
- 
-  @param[in,out] path Path to a dag node that could be a transform or a shape.
-  On return, the path will be to a shape node if one exists.
-  @return MStatus.
- */
-MStatus GetShapeNode(MDagPath& path) {
-  MStatus status;
-
-  if (path.hasFn(MFn::kTransform)) {
-    unsigned int shape_count;
-    status = path.numberOfShapesDirectlyBelow(shape_count);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-
-    for (unsigned int i = 0; i < shape_count; ++i) {
-      status = path.extendToShapeDirectlyBelow(i);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Make sure it is not an intermediate object.
-      MFnDagNode fnNode(path, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      if (!fnNode.isIntermediateObject()) {
-        return MS::kSuccess;
-      }
-      // Go to the next shape if this is an intermediate shape.
-      path.pop();
-    }
-  } else if (path.hasFn(MFn::kMesh) || path.hasFn(MFn::kNurbsCurve) || path.hasFn(MFn::kNurbsSurface)) {
-    // This is already a shape node.
-    return MS::kSuccess;
-  }
-
-  // No valid shape node found.
-  return MS::kFailure;
-}
 
 
 CVWrapCmd::CVWrapCmd()
     : radius_(0.1),
       name_("cvWrap#"),
       command_(kCommandCreate),
-      useBinding_(false) {
+      useBinding_(false),
+      newBindMesh_(false) {
 }
 
 
@@ -157,8 +84,6 @@ MStatus CVWrapCmd::doIt(const MArgList& args) {
     
   GatherCommandArguments(args);
 
-  MItSelectionList itSel(selectionList_, MFn::kInvalid, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
   if (command_ == kCommandImport && command_ == kCommandExport) {
     // In import/export mode, get the selected wrap deformer node so we can read/write
     // data from it.
@@ -181,10 +106,7 @@ MStatus CVWrapCmd::doIt(const MArgList& args) {
     CHECK_MSTATUS_AND_RETURN_IT(status);
   }
 
-  status = redoIt();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
-
-  return MS::kSuccess;
+  return redoIt();
 }
 
 
@@ -195,8 +117,6 @@ MStatus CVWrapCmd::GatherCommandArguments(const MArgList& args) {
     command_ = kCommandHelp;
     DisplayHelp();
     return MS::kSuccess;
-  } else if (argData.isFlagSet(kNewBindMeshFlagShort)) {
-    command_ = kCommandNewBindMesh;
   } else if (argData.isFlagSet(kExportFlagShort)) {
     command_ = kCommandExport;
     filePath_ = argData.flagArgumentString(kExportFlagShort, 0, &status);
@@ -206,6 +126,7 @@ MStatus CVWrapCmd::GatherCommandArguments(const MArgList& args) {
     filePath_ = argData.flagArgumentString(kImportFlagShort, 0, &status );
     CHECK_MSTATUS_AND_RETURN_IT(status);
   }
+  newBindMesh_ = argData.isFlagSet(kNewBindMeshFlagShort);
   if (argData.isFlagSet(kRadiusFlagShort)) {
     radius_ = argData.flagArgumentDouble(kRadiusFlagShort, 0, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -311,17 +232,20 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
   // Create a bind mesh so we can run rebind commands.  We need a mesh at the state of the 
   // initial binding in order to properly calculate rebinding information.  We can't use
   // the intermediate mesh for rebinding because we may not be binding at the rest pose.
+
+  // Check if this driver already has a bind mesh.
   MDagPath pathBindMesh;
-  MObject oDriver = pathDriver_.node();
-  status = getExistingBindMesh( oDriver, pathBindMesh );
+  status = GetExistingBindMesh(pathBindMesh);
   CHECK_MSTATUS_AND_RETURN_IT(status);
-  if ( /*m_newBindMesh ||*/ !pathBindMesh.isValid() ) {
+  if (newBindMesh_ || !pathBindMesh.isValid()) {
+    // No bind mesh exists or the user wants to force create a new one.
     MStringArray duplicate;
+    /// TODO: Move the command into the dg modifier.
     // Calling mesh.duplicate() can give incorrect results.
     MGlobal::executeCommand("duplicate -rr -n " + fnNode.name() + "Base " + fnDriver.partialPathName(), duplicate);
-    status = getDagPath( duplicate[0], pathBindMesh );
+    status = GetDagPath(duplicate[0], pathBindMesh);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    status = deleteIntermediateObjects( pathBindMesh );
+    status = DeleteIntermediateObjects(pathBindMesh);
     CHECK_MSTATUS_AND_RETURN_IT(status);
     m_createdNodes.append( duplicate[0] );
 
@@ -750,15 +674,6 @@ MStatus CVWrapCmd::crawlSurface( int vertexIndex,
 }
 
 
-double CVWrapCmd::distanceSquared( const MPoint& p1, const MPoint& p2 )
-{
-    double xx = p2.x - p1.x;
-    double yy = p2.y - p1.y;
-    double zz = p2.z - p1.z;
-    return (xx*xx) + (yy*yy) + (zz*zz);
-}
-
-
 void CVWrapCmd::calculateSampleWeights( std::map<int, double>& distances,
         MIntArray& sampleIds,
         MDoubleArray& weights,
@@ -806,97 +721,40 @@ void CVWrapCmd::calculateSampleWeights( std::map<int, double>& distances,
 }
 
 
-/**
-    @brief Gets the MDagPath of any existing bind wrap mesh so we don't have to duplicate it for each new wrap.
-
-    @param[in] oDriver Driver mesh MObject
-    @param[out] pathBindMesh Storage for path to an existing bind mesh
-*/
-MStatus CVWrapCmd::getExistingBindMesh( MObject& oDriver, MDagPath &pathBindMesh )
-{
-    MStatus status;
-    MFnDependencyNode fnDriver( oDriver, &status );
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-
-    MPlug plugOutGeom = fnDriver.findPlug( "outMesh", false, &status );
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    MPlugArray geomPlugs;
-    plugOutGeom.connectedTo( geomPlugs, false, true );
-    for ( unsigned int i = 0; i < geomPlugs.length(); i++ )
-    {
-        MObject oThisNode = geomPlugs[i].node();
-        MFnDependencyNode fnNode( oThisNode );
-        if ( fnNode.typeId() == cvWrap::id )
-        {
-            // Get bind wrap mesh from wrap node
-            MPlug plugBindWrapMesh = fnNode.findPlug( "bindMesh", false, &status );
-            CHECK_MSTATUS_AND_RETURN_IT(status);
-            MPlugArray bindPlugs;
-            plugBindWrapMesh.connectedTo( bindPlugs, true, false );
-            if ( bindPlugs.length() > 0 )
-            {
-                MObject oBindMesh = bindPlugs[0].node();
-                MFnDagNode fnBindDag( oBindMesh, &status );
-                CHECK_MSTATUS_AND_RETURN_IT(status);
-                status = fnBindDag.getPath( pathBindMesh );
-                CHECK_MSTATUS_AND_RETURN_IT(status);
-            }
-            break;
-        }
-    }
-    return MS::kSuccess;
-}
-
-
-
-MStatus CVWrapCmd::getDagPath( MString& name, MDagPath& pathNode )
-{
-    MStatus status;
-    MSelectionList list;
-    status = MGlobal::getSelectionListByName( name, list );
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    status = list.getDagPath( 0, pathNode );
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    return MS::kSuccess;
-}
-
-
-MStatus CVWrapCmd::deleteIntermediateObjects( MDagPath& pathNode )
-{
-    MStatus status;
-    if ( pathNode.node().hasFn( MFn::kMesh ) )
-    {
-        status = pathNode.pop();
-    }
-    if ( !pathNode.node().hasFn( MFn::kTransform ) )
-    {
-        CHECK_MSTATUS_AND_RETURN_IT( MS::kFailure );
-    }
-
-    unsigned int childCount = pathNode.childCount();
-    MFnDagNode fnTransform( pathNode );
-    MString name = fnTransform.name();
-    bool hasShape = false;
-    for ( unsigned int i = 0; i < childCount; i++ )
-    {
-        MObject oChild = fnTransform.child( i, &status );
-        if ( MFAIL(status) )
-        {
-            continue;
-        }
-        status = pathNode.push( oChild );
+MStatus CVWrapCmd::GetExistingBindMesh(MDagPath &pathBindMesh) {
+  MStatus status;
+  MObject oDriver = pathDriver_.node();
+  MFnDependencyNode fnDriver(oDriver, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  
+  // We'll find the bind mesh associated with the driver mesh by traversing the mesh connections
+  // through the cvWrap node.
+  MPlug plugOutGeom = fnDriver.findPlug("outMesh", false, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MPlugArray geomPlugs;
+  plugOutGeom.connectedTo(geomPlugs, false, true);
+  for (unsigned int i = 0; i < geomPlugs.length(); i++) {
+    // First iterate through the outMesh connections to find a cvWrap node.
+    MObject oThisNode = geomPlugs[i].node();
+    MFnDependencyNode fnNode(oThisNode);
+    if (fnNode.typeId() == cvWrap::id) {
+      // Get bind wrap mesh from wrap node
+      MPlug plugBindWrapMesh = fnNode.findPlug(cvWrap::aBindDriverGeo, false, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      MPlugArray bindPlugs;
+      plugBindWrapMesh.connectedTo(bindPlugs, true, false);
+      if (bindPlugs.length() > 0) {
+        // If a bind mesh is connected, use it!
+        MObject oBindMesh = bindPlugs[0].node();
+        MFnDagNode fnBindDag(oBindMesh, &status);
         CHECK_MSTATUS_AND_RETURN_IT(status);
-
-        MFnDagNode fnNode( pathNode, &status );
+        status = fnBindDag.getPath(pathBindMesh);
         CHECK_MSTATUS_AND_RETURN_IT(status);
-        status = pathNode.pop();
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        if ( fnNode.isIntermediateObject() )
-        {
-            status = MGlobal::executeCommand( "delete " + fnNode.partialPathName() );
-        }
+        return MS::kSuccess;
+      }
     }
-    return MS::kSuccess;
+  }
+  return MS::kSuccess;
 }
 
 

@@ -6,6 +6,8 @@ set(SOURCE_FILES
     "cvWrapDeformer.h"
     "cvWrapRebindCmd.cpp"
     "cvWrapRebindCmd.h"
+    "common.cpp"
+    "common.h"
 )
 
 find_package(Maya REQUIRED)
