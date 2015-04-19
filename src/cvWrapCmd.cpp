@@ -71,9 +71,9 @@ MSyntax CVWrapCmd::newSyntax() {
 }
 
 
-void* CVWrapCmd::creator() {																
-  return new CVWrapCmd;										
-}		
+void* CVWrapCmd::creator() {                                
+  return new CVWrapCmd;                    
+}    
 
 
 bool CVWrapCmd::isUndoable() const {
@@ -92,7 +92,7 @@ MStatus CVWrapCmd::doIt(const MArgList& args) {
     status = selectionList_.getDependNode(0, oWrapNode_);
     CHECK_MSTATUS_AND_RETURN_IT(status);
     MFnDependencyNode fnNode(oWrapNode_);
-    if (fnNode.typeId() != cvWrap::id) {
+    if (fnNode.typeId() != CVWrap::id) {
       MGlobal::displayError("No wrap node specified.");
       return MS::kFailure;
     }
@@ -102,9 +102,12 @@ MStatus CVWrapCmd::doIt(const MArgList& args) {
     CHECK_MSTATUS_AND_RETURN_IT(status);
 
     // Add the cvWrap creation command to the modifier.
-    MFnDagNode fnDriven(pathDriven_);
-    MString nameCmd = "-n \"" + name_ + "\" " + fnDriven.partialPathName();
-    status = dgMod_.commandToExecute("deformer -type cvWrap " + nameCmd);
+    MString command = "deformer -type cvWrap -n \"" + name_ + "\"";
+    for (unsigned int i = 0; i < pathDriven_.length(); ++i) {
+      MFnDagNode fnDriven(pathDriven_[i]);
+      command += " " + fnDriven.partialPathName();
+    }
+    status = dgMod_.commandToExecute(command);
     CHECK_MSTATUS_AND_RETURN_IT(status);
   }
 
@@ -160,16 +163,24 @@ MStatus CVWrapCmd::GetGeometryPaths() {
   status = selectionList_.getDagPath(0, pathDriver_);
   CHECK_MSTATUS_AND_RETURN_IT(status);
   status = GetShapeNode(pathDriver_);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
-  status = selectionList_.getDagPath(1, pathDriven_);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
-  status = GetShapeNode(pathDriven_);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
   // The driver must be a mesh for this specific algorithm.
   if (!pathDriver_.hasFn(MFn::kMesh)) {
     MGlobal::displayError("cvWrap driver must be a mesh.");
     return MS::kFailure;
   }
+  MItSelectionList iter(selectionList_);
+  iter.next(); // Skip the first selected mesh which is the driver
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  pathDriven_.clear();
+  for ( ; !iter.isDone(); iter.next()) {
+      MDagPath path;
+      MObject component;
+      iter.getDagPath(path, component);
+      status = GetShapeNode(path);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      pathDriven_.append(path);
+  }
+  
   return MS::kSuccess;
 }
 
@@ -195,15 +206,6 @@ MStatus CVWrapCmd::redoIt() {
    
 MStatus CVWrapCmd::CreateWrapDeformer() {
   MStatus status;
-  MFnDagNode fnDriver(pathDriver_);
-  MFnDagNode fnDriven(pathDriven_);
-  MFnMesh fnDriverMesh(pathDriver_);
-  MItGeometry itGeo(pathDriven_, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
-  MPointArray vertices;
-  itGeo.allPositions(vertices);
-  int numDrivenVerts = vertices.length();
-    
   // Create the deformer
   status = dgMod_.doIt();
   CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -213,8 +215,9 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
   // Get the created wrap deformer node.
   status = GetLatestWrapNode();
   CHECK_MSTATUS_AND_RETURN_IT(status);
+
   MFnDependencyNode fnNode(oWrapNode_, &status);
-  appendToResult(fnNode.name());
+  setResult(fnNode.name());
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
   if (useBinding_) {
@@ -226,14 +229,15 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
     CHECK_MSTATUS_AND_RETURN_IT(status);
   }
 
-  // Connect the plugs necessary to drive the wrap deformer.
+  // Connect the driver mesh to the wrap deformer.
+  MFnDagNode fnDriver(pathDriver_);
   MPlug plugDriverMesh = fnDriver.findPlug("worldMesh", false, &status);
   CHECK_MSTATUS_AND_RETURN_IT(status);
   status = plugDriverMesh.selectAncestorLogicalIndex(0, plugDriverMesh.attribute());
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
-  MPlug plugDriverGeo(oWrapNode_, cvWrap::aDriverGeo);
-  MPlug plugBindMesh(oWrapNode_, cvWrap::aBindDriverGeo);
+  MPlug plugDriverGeo(oWrapNode_, CVWrap::aDriverGeo);
+  MPlug plugBindMesh(oWrapNode_, CVWrap::aBindDriverGeo);
 
   // Create a bind mesh so we can run rebind commands.  We need a mesh at the state of the 
   // initial binding in order to properly calculate rebinding information.  We can't use
@@ -246,14 +250,15 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
   if (newBindMesh_ || !pathBindMesh.isValid()) {
     // No bind mesh exists or the user wants to force create a new one.
     MStringArray duplicate;
-    /// TODO: Move the command into the dg modifier.
     // Calling mesh.duplicate() can give incorrect results.
+    // We are doing the duplicate here rather than the MDGModifier because we need the name
+    // of the duplicated geometry and it would not be reliable to do it from the modifier.
     MGlobal::executeCommand("duplicate -rr -n " + fnNode.name() + "Base " + fnDriver.partialPathName(), duplicate);
     status = GetDagPath(duplicate[0], pathBindMesh);
     CHECK_MSTATUS_AND_RETURN_IT(status);
     status = DeleteIntermediateObjects(pathBindMesh);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    m_createdNodes.append(duplicate[0]);
+    bindMeshes_.append(duplicate[0]);
 
     // Hide the duplicate
     MFnDagNode fnBindMesh(pathBindMesh, &status);
@@ -270,31 +275,6 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
   MPlug plugBindMessage = fnBindMesh.findPlug("message", false, &status);   
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
-  // Store Nurbs surface attributes
-  if (pathDriven_.node().apiType() == MFn::kNurbsSurface) {
-    MFnNurbsSurface fnSurface(pathDriven_, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    int cvsInU = fnSurface.numCVsInU();
-    MPlug plugCVsInU(oWrapNode_, cvWrap::aCVsInU);
-    plugCVsInU.setInt(cvsInU);
-
-    int cvsInV = fnSurface.numCVsInV();
-    MPlug plugCVsInV(oWrapNode_, cvWrap::aCVsInV);
-    plugCVsInV.setInt(cvsInV);
-
-    int formInU = fnSurface.formInU();
-    MPlug plugFormInU(oWrapNode_, cvWrap::aFormInU);
-    plugFormInU.setInt(formInU);
-
-    int formInV = fnSurface.formInV();
-    MPlug plugFormInV(oWrapNode_, cvWrap::aFormInV);
-    plugFormInV.setInt(formInV);
-
-    int degreeV = fnSurface.degreeV();
-    MPlug plugDegreeV(oWrapNode_, cvWrap::aDegreeV);
-    plugDegreeV.setInt(degreeV);
-  }
-
   // Connect the driver and bind meshes to the wrap deformer
   MDGModifier dgMod;
   dgMod.connect(plugDriverMesh, plugDriverGeo);
@@ -308,10 +288,10 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
 
 MStatus CVWrapCmd::GetLatestWrapNode() {
   MStatus status;
-  MObject oDriven = pathDriven_.node();
+  MObject oDriven = pathDriven_[0].node();
   
   // Since we use MDGModifier to execute the deformer command, we can't get
-  // the create deformer node, so we need to find it in the deformation chain.
+  // the created deformer node, so we need to find it in the deformation chain.
   MItDependencyGraph itDG(oDriven,
                           MFn::kGeometryFilt,
                           MItDependencyGraph::kUpstream, 
@@ -324,7 +304,7 @@ MStatus CVWrapCmd::GetLatestWrapNode() {
     oDeformerNode = itDG.currentItem();
     MFnDependencyNode fnNode(oDeformerNode, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    if (fnNode.typeId() == cvWrap::id) {
+    if (fnNode.typeId() == CVWrap::id) {
       oWrapNode_ = oDeformerNode;
       return MS::kSuccess;
     }
@@ -343,7 +323,27 @@ MStatus CVWrapCmd::CalculateBinding() {
 
   MFnMesh fnDriverMesh(pathDriver_, &status);
   CHECK_MSTATUS_AND_RETURN_IT(status);
-  if (uvset_.length() == 0) {
+
+  bool uvSetExists = false;
+  if (uvset_.length()) {
+    // Make sure uv set exists
+    MStringArray uvSets;
+    status = fnDriverMesh.getUVSetNames(uvSets);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    for (unsigned int i = 0; i < uvSets.length(); ++i) {
+      if (uvset_ == uvSets[i]) {
+        uvSetExists = true;
+        break;
+      }
+    }
+    if (!uvSetExists) {
+      // Fall back to the current UV set
+      MString message = "UV set " + uvset_ + " does not exist on " + fnDriverMesh.name() +
+                        ", defaulting to current uv set.";
+      MGlobal::displayWarning(message);
+    }
+  }
+  if (uvset_.length() == 0 || !uvSetExists) {
     // If no UV set was specified use the current UV set.
     status = fnDriverMesh.getCurrentUVSetName(uvset_);
     CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -363,128 +363,143 @@ MStatus CVWrapCmd::CalculateBinding() {
   MFnSingleIndexedComponent fnComp;
   MFnComponentListData fnCompData;
   
-  MPlug plugSampleWeights(oWrapNode_, cvWrap::aSampleWeights);
-  MPlug plugSampleVerts(oWrapNode_, cvWrap::aSampleComponents);
-  MPlug plugSampleBindMatrix(oWrapNode_, cvWrap::aBindMatrix);
-  MPlug plugTriangleVerts(oWrapNode_, cvWrap::aTriangleVerts);
-  MPlug plugBarycentricWeights(oWrapNode_, cvWrap::aBarycentricWeights);
-  MPlug plugBindInfoElement;
+  MPlug plugBindData(oWrapNode_, CVWrap::aBindData);
+  
   MFnNumericData fnNumericData;
   MFnMatrixData fnMatrixData;
-  int triangleVertices[3];
-  MItGeometry itGeo(pathDriven_, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
-  MPointArray inputPoints;
-  itGeo.allPositions(inputPoints, MSpace::kWorld);
-
-  // Start progress bar
-  StartProgress("Binding wrap...", itGeo.count());
-
-  for (unsigned int i = 0; i < inputPoints.length(); ++i) {
-    // We need to calculate a bind matrix for each component.
-    // The closest point will be the origin of the coordinate system.
-    // The weighted normal of the vertices in the sample radius will be one axis.
-    // The tangent at the closest point will be another axis.
-
-    // Get the closest point and faceId.  The close
-    MPointOnMesh pointOnMesh;
-    status = intersector.getClosestPoint(inputPoints[i], pointOnMesh);
+  for (unsigned int geomIndex = 0; geomIndex < pathDriven_.length; ++geomIndex) {
+    // Get the plugs to the binding attributes for this geometry
+    MPlug plugBind = plugBindData.elementByLogicalIndex(geomIndex, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    int faceId = pointOnMesh.faceIndex();
-    int triangleId = pointOnMesh.triangleIndex();
-    // Put point in world space so we can calculate the proper bind matrix.
-    MPoint closestPoint = MPoint(pointOnMesh.getPoint()) * driverMatrix;
-
-    // Get vertices of closest face so we can crawl out from them.
-    MIntArray vertexList;
-    status = fnDriverMesh.getPolygonVertices(faceId, vertexList);
+    MPlug plugSampleWeights = plugBind.child(CVWrap::aSampleWeights, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugSampleVerts = plugBind.child(CVWrap::aSampleComponents, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugSampleBindMatrix = plugBind.child(CVWrap::aBindMatrix, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugTriangleVerts = plugBind.child(CVWrap::aTriangleVerts, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugBarycentricWeights = plugBind.child(CVWrap::aBarycentricWeights, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MItGeometry itGeo(pathDriven_[geomIndex], &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
 
-    // Crawl the surface to find all the vertices within the sample radius.
-    std::map<int, double> distances;
-    vertexList.clear();
-    CrawlSurface(closestPoint, vertexList, points, radius_, adjacency, distances);
+    // Start progress bar
+    StartProgress("Binding wrap...", itGeo.count());
 
-    // Calculate the weight values per sampled vertex
-    MIntArray sampleIds;
-    MDoubleArray weights;
-    CalculateSampleWeights(distances, radius_, sampleIds, weights);
+    for (int ii = 0; !itGeo.isDone(); itGeo.next(), ++ii) {
+      // We need to calculate a bind matrix for each component.
+      // The closest point will be the origin of the coordinate system.
+      // The weighted normal of the vertices in the sample radius will be one axis.
+      // The tangent at the closest point will be another axis.
 
-    // Get barycentric coordinates of closestPoint
-    status = fnDriverMesh.getPolygonTriangleVertices(faceId, triangleId, triangleVertices);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    BaryCoords coords;
-    GetBarycentricCoordinates(closestPoint, points[triangleVertices[0]],
-                              points[triangleVertices[1]], points[triangleVertices[2]],
-                              coords);
+      // Get the closest point and faceId.  The close
+      MPoint inputPoint = itGeo.position(MSpace::kWorld, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      MPointOnMesh pointOnMesh;
+      status = intersector.getClosestPoint(inputPoint, pointOnMesh);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      int faceId = pointOnMesh.faceIndex();
+      int triangleId = pointOnMesh.triangleIndex();
+      // Put point in world space so we can calculate the proper bind matrix.
+      MPoint closestPoint = MPoint(pointOnMesh.getPoint()) * driverMatrix;
 
-    // Calculate the up vector from the tangents
-    MVector up;
-    for (int j = 0; j < 3; ++j) {
-      int tangentId = fnDriverMesh.getTangentId(faceId, triangleVertices[j]);
-      up += tangents[tangentId] * coords[j];
-    }
-    up.normalize();
+      // Get vertices of closest face so we can crawl out from them.
+      MIntArray vertexList;
+      status = fnDriverMesh.getPolygonVertices(faceId, vertexList);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
 
-    // Calculate the weighted normal of the coordinate system
-    MVector normal;
-    for (unsigned int j = 0; j < weights.length(); j++) {
-      normal += MVector(normals[sampleIds[j]]) * weights[j];
-    }
-    normal.normalize();
+      // Crawl the surface to find all the vertices within the sample radius.
+      std::map<int, double> distances;
+      vertexList.clear();
+      CrawlSurface(closestPoint, vertexList, points, radius_, adjacency, distances);
 
-    // Store sample vert ids.
-    MObject oComp = fnComp.create(MFn::kMeshVertComponent, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    status = fnComp.addElements(sampleIds);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    MObject oCompData = fnCompData.create();
-    fnCompData.add(oComp);
-    plugSampleVerts.elementByLogicalIndex(i, &status).setMObject(oCompData);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+      // Calculate the weight values per sampled vertex
+      MIntArray sampleIds;
+      MDoubleArray weights;
+      CalculateSampleWeights(distances, radius_, sampleIds, weights);
 
-    // Store sample weights
-    MFnDoubleArrayData fnDoubleData;
-    MObject oDoubleData = fnDoubleData.create(weights, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    plugSampleWeights.elementByLogicalIndex(i, &status).setMObject(oDoubleData);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+      // Get barycentric coordinates of closestPoint
+      int triangleVertices[3];
+      status = fnDriverMesh.getPolygonTriangleVertices(faceId, triangleId, triangleVertices);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      BaryCoords coords;
+      GetBarycentricCoordinates(closestPoint, points[triangleVertices[0]],
+                                points[triangleVertices[1]], points[triangleVertices[2]],
+                                coords);
 
-    // Store bind matrix
-    MMatrix matrix;
-    CreateMatrix(closestPoint, normal, up, matrix);
-    matrix = matrix.inverse();
-    MObject oMatrixData = fnMatrixData.create(matrix, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    plugSampleBindMatrix.elementByLogicalIndex(i, &status).setMObject(oMatrixData);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+      // Calculate the up vector from the tangents
+      MVector up;
+      for (int j = 0; j < 3; ++j) {
+        int tangentId = fnDriverMesh.getTangentId(faceId, triangleVertices[j]);
+        up += tangents[tangentId] * coords[j];
+      }
+      up.normalize();
 
-    // Store triangle vertices
-    MObject oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    status = fnNumericData.setData3Int(triangleVertices[0], triangleVertices[1], triangleVertices[2]);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    plugTriangleVerts.elementByLogicalIndex(i, &status).setMObject(oNumericData);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+      // Calculate the weighted normal of the coordinate system
+      MVector normal;
+      for (unsigned int j = 0; j < weights.length(); j++) {
+        normal += MVector(normals[sampleIds[j]]) * weights[j];
+      }
+      normal.normalize();
 
-    // Store barycentric coordinates
-    oNumericData = fnNumericData.create(MFnNumericData::k3Float, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    status = fnNumericData.setData3Float(coords[0], coords[1], coords[2]);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    plugBarycentricWeights.elementByLogicalIndex(i, &status).setMObject(oNumericData);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+      // Store all the binding data for this component
+      // Note for nurbs surfaces the indices may not be continuous.
+      int logicalIndex = itGeo.index();
 
-    // Increment the progress bar on every 250 verts because updating the UI is slow.
-    if (i % 250 == 0 && i != 0) {
-      StepProgress(250);
-      if (ProgressCancelled()) {
-        break;
+      // Store sample vert ids.
+      MObject oComp = fnComp.create(MFn::kMeshVertComponent, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      status = fnComp.addElements(sampleIds);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      MObject oCompData = fnCompData.create();
+      fnCompData.add(oComp);
+      plugSampleVerts.elementByLogicalIndex(logicalIndex, &status).setMObject(oCompData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Store sample weights
+      MFnDoubleArrayData fnDoubleData;
+      MObject oDoubleData = fnDoubleData.create(weights, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugSampleWeights.elementByLogicalIndex(logicalIndex, &status).setMObject(oDoubleData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Store bind matrix
+      MMatrix matrix;
+      CreateMatrix(closestPoint, normal, up, matrix);
+      matrix = matrix.inverse();
+      MObject oMatrixData = fnMatrixData.create(matrix, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugSampleBindMatrix.elementByLogicalIndex(logicalIndex, &status).setMObject(oMatrixData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Store triangle vertices
+      MObject oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      status = fnNumericData.setData3Int(triangleVertices[0], triangleVertices[1], triangleVertices[2]);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugTriangleVerts.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Store barycentric coordinates
+      oNumericData = fnNumericData.create(MFnNumericData::k3Float, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      status = fnNumericData.setData3Float(coords[0], coords[1], coords[2]);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugBarycentricWeights.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Increment the progress bar on every 250 verts because updating the UI is slow.
+      if (ii % 250 == 0 && ii != 0) {
+        StepProgress(250);
+        if (ProgressCancelled()) {
+          break;
+        }
       }
     }
-  }
 
-  EndProgress();
+    EndProgress();
+  }
   return MS::kSuccess;
 }
 
@@ -505,9 +520,9 @@ MStatus CVWrapCmd::GetExistingBindMesh(MDagPath &pathBindMesh) {
     // First iterate through the outMesh connections to find a cvWrap node.
     MObject oThisNode = geomPlugs[i].node();
     MFnDependencyNode fnNode(oThisNode);
-    if (fnNode.typeId() == cvWrap::id) {
+    if (fnNode.typeId() == CVWrap::id) {
       // Get bind wrap mesh from wrap node
-      MPlug plugBindWrapMesh = fnNode.findPlug(cvWrap::aBindDriverGeo, false, &status);
+      MPlug plugBindWrapMesh = fnNode.findPlug(CVWrap::aBindDriverGeo, false, &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
       MPlugArray bindPlugs;
       plugBindWrapMesh.connectedTo(bindPlugs, true, false);
@@ -531,11 +546,17 @@ MStatus CVWrapCmd::undoIt() {
   status = dgMod_.undoIt();
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
-  for (unsigned int i = 0; i < m_createdNodes.length(); i++)
-  {
-      MGlobal::executeCommand("delete " + m_createdNodes[i]);
+  if (bindMeshes_.length()) {
+    // Delete any created bind meshes.
+    MDGModifier mod;
+    for (unsigned int i = 0; i < bindMeshes_.length(); i++) {
+      status = mod.commandToExecute("delete " + bindMeshes_[i]);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+    }
+    status = mod.doIt();
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    bindMeshes_.clear();
   }
-  m_createdNodes.clear();
 
   return MS::kSuccess;
 }

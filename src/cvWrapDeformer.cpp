@@ -1,410 +1,354 @@
 #include "cvWrapDeformer.h"
+#include <maya/MFnCompoundAttribute.h>
+#include <maya/MFnMatrixAttribute.h>
+#include <maya/MFnMessageAttribute.h>
+#include <maya/MFnNumericAttribute.h>
+#include <maya/MFnTypedAttribute.h>
+#include <maya/MThreadPool.h>
 
-MTypeId     cvWrap::id( 0x0011580B );
+MTypeId CVWrap::id(0x0011580B);
 
-MObject     cvWrap::aBindDriverGeo;
-MObject     cvWrap::aDriverGeo;
-MObject     cvWrap::aSampleVerts;
-MObject     cvWrap::aRadius;
-MObject     cvWrap::aBindInfo;
-MObject     cvWrap::aSampleComponents;
-MObject     cvWrap::aSampleWeights;
-MObject     cvWrap::aBindMatrix;
-MObject     cvWrap::aTriangleVerts;
-MObject     cvWrap::aBarycentricWeights;
-MObject     cvWrap::aNumTasks;
-MObject     cvWrap::aDirty;
-MObject     cvWrap::aScale;
-MObject     cvWrap::aCVsInU;
-MObject     cvWrap::aCVsInV;
-MObject     cvWrap::aFormInU;
-MObject     cvWrap::aFormInV;
-MObject     cvWrap::aDegreeV;
+const char* CVWrap::kName = "cvWrap";
+MObject CVWrap::aBindDriverGeo;
+MObject CVWrap::aDriverGeo;
+MObject CVWrap::aBindData;
+MObject CVWrap::aSampleVerts;
+MObject CVWrap::aRadius;
+MObject CVWrap::aBindInfo;
+MObject CVWrap::aSampleComponents;
+MObject CVWrap::aSampleWeights;
+MObject CVWrap::aBindMatrix;
+MObject CVWrap::aTriangleVerts;
+MObject CVWrap::aBarycentricWeights;
+MObject CVWrap::aUVSet;
+MObject CVWrap::aNumTasks;
+MObject CVWrap::aScale;
 
+MStatus CVWrap::initialize() {
+  MFnCompoundAttribute cAttr;
+  MFnMatrixAttribute mAttr;
+  MFnMessageAttribute meAttr;
+  MFnTypedAttribute tAttr;
+  MFnNumericAttribute nAttr;
+  MStatus status;
 
-cvWrap::cvWrap() 
-{
-    MThreadPool::init();
+  aDriverGeo = tAttr.create("driver", "driver", MFnData::kMesh);
+  addAttribute(aDriverGeo);
+  attributeAffects(aDriverGeo, outputGeom);
+
+  aBindDriverGeo = meAttr.create("bindMesh", "bindMesh");
+  addAttribute(aBindDriverGeo);
+
+  aUVSet = tAttr.create("uvSet", "uvSet", MFnData::kString);
+  addAttribute(aUVSet);
+
+  /* Each outputGeometry needs:
+  -- bindData
+     | -- sampleComponents
+     | -- sampleWeights
+     | -- bindMatrix
+     | -- triangleVerts
+     | -- barycentricWeights
+  */
+
+  aSampleComponents = tAttr.create("sampleComponents", "sampleComponents", MFnData::kComponentList);
+  tAttr.setArray(true);
+
+  aSampleWeights = tAttr.create("sampleWeights", "sampleWeights", MFnData::kDoubleArray);
+  tAttr.setArray(true);
+
+  aBindMatrix = mAttr.create("bindMatrix", "bindMatrix");
+  mAttr.setDefault(MMatrix::identity);
+  mAttr.setArray(true);
+
+  aTriangleVerts = nAttr.create("triangleVerts", "triangleVerts", MFnNumericData::k3Int);
+  nAttr.setArray(true);
+
+  aBarycentricWeights = nAttr.create("barycentricWeights", "barycentricWeights", MFnNumericData::k3Float);
+  nAttr.setArray(true);
+
+  aBindData = cAttr.create("bindData", "bindData");
+  cAttr.setArray(true);
+  cAttr.addChild(aSampleComponents);
+  cAttr.addChild(aSampleWeights);
+  cAttr.addChild(aBindMatrix);
+  cAttr.addChild(aTriangleVerts);
+  cAttr.addChild(aBarycentricWeights);
+  addAttribute(aBindData);
+  attributeAffects(aSampleComponents, outputGeom);
+  attributeAffects(aSampleWeights, outputGeom);
+  attributeAffects(aBindMatrix, outputGeom);
+  attributeAffects(aBarycentricWeights, outputGeom);
+
+  aScale = nAttr.create("scale", "scale", MFnNumericData::kFloat, 1.0);
+  nAttr.setKeyable(true);
+  addAttribute(aScale);
+  attributeAffects(aScale, outputGeom);
+
+  aNumTasks = nAttr.create("numTasks", "numTasks", MFnNumericData::kInt, 32);
+  nAttr.setMin(1);
+  nAttr.setMax(64);
+  addAttribute(aNumTasks);
+  attributeAffects(aNumTasks, outputGeom);
+
+  MGlobal::executeCommand("makePaintable -attrType multiFloat -sm deformer CVWrap weights");
+    
+  return MS::kSuccess;
 }
 
-cvWrap::~cvWrap() 
-{
-    MThreadPool::release();
-    for ( unsigned int i = 0; i < m_sortedWeights.size(); i++ )
-    {
-        m_sortedWeights[i].clear();
-    }
-    m_sortedWeights.clear();
-    m_triangleVerts.clear();
-    m_barycentricWeights.clear();
+
+CVWrap::CVWrap() {
+  MThreadPool::init();
+}
+
+CVWrap::~CVWrap() {
+  MThreadPool::release();
+  std::vector<ThreadData*>::iterator iter;
+  for (iter = threadData_.begin(); iter != threadData_.end(); ++iter) {
+    delete [] *iter;
+  }
+  threadData_.clear();
+
+  m_triangleVerts.clear();
+  m_barycentricWeights.clear();
 }
 
 
-void* cvWrap::creator() { return new cvWrap(); }
+void* CVWrap::creator() { return new CVWrap(); }
 
 
-MStatus cvWrap::deform( MDataBlock& data,
-        MItGeometry& itGeo,
-        const MMatrix& localToWorldMatrix,
-        unsigned int geomIndex )
-{
-    MStatus status;
-    // Get envelope
-	m_taskData.envelope = data.inputValue( envelope ).asFloat();
-    int numTasks = data.inputValue( aNumTasks ).asInt();
-    if ( m_taskData.envelope == 0.0f || numTasks <= 0 )
-    {
-        return MS::kSuccess;
-    }
+MStatus CVWrap::setDependentsDirty(const MPlug& plugBeingDirtied, MPlugArray& affectedPlugs) {
+  // TODO: Extract the geom index from the dirty plug and set the dirty flag
+  unsigned int geomIndex = 0;
+  dirty_[geomIndex] = true;
+  return MS::kSuccess;
+}
 
-    // Get driver geo
-    MDataHandle hDriverGeo = data.inputValue( aDriverGeo, &status );
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    MObject oDriverGeo = hDriverGeo.asMesh();
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    if ( oDriverGeo.isNull() )
-    {
-        return MS::kSuccess;
-    }
 
-    bool dirty = data.inputValue( aDirty ).asBool();
-
-    // Sorted weights are used to build a correct coordinate space.
-    // There are cases when the up vector may be 0 length, in which
-    // case we need to take out vertex influence starting at the lowest
-    // weight.
-    if ( m_taskData.sortedWeights.size() == 0 || dirty )
-    {
-        MDataHandle hDirty = data.outputValue( aDirty, &status );
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        hDirty.setBool( false );
-        hDirty.setClean();
-
-        status = getBindInfo( data );
-        if ( status == MS::kNotImplemented )
-        {
-            return MS::kSuccess;
-        }
-        else if ( MFAIL( status ) )
-        {
-            CHECK_MSTATUS_AND_RETURN_IT( status );
-        }
-    }
-    
-
-    // Get driver geo information
-    MFnMesh fnDriver( oDriverGeo, &status );
-    MFloatVectorArray driverNormalsFloat;
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    status = fnDriver.getPoints( m_taskData.driverPoints, MSpace::kWorld );
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    unsigned int numDriverPoints = m_taskData.driverPoints.length();
-
-    // Put desired points and normals into world space
-    bool* pAlreadyCalculated = new bool[numDriverPoints];
-    for ( unsigned int i = 0; i < numDriverPoints; i++ )
-    {
-        pAlreadyCalculated[i] = false;
-    }
-
-    int index = 0;
-    m_taskData.driverNormals.setLength( numDriverPoints );
-    for( unsigned int i = 0; i < m_taskData.sortedWeights.size(); i++ )
-    {
-        for( unsigned int j = 0; j < m_taskData.sortedWeights[i].size(); j++ )
-        {
-            index = m_taskData.sortedWeights[i][j].index;
-            if ( !pAlreadyCalculated[index] )
-            {
-                status = fnDriver.getVertexNormal( index, false, m_taskData.driverNormals[index], MSpace::kWorld );
-                CHECK_MSTATUS_AND_RETURN_IT( status );
-            }
-        }
-    }
-    delete [] pAlreadyCalculated;
-    
-    m_taskData.scale = data.inputValue( aScale ).asFloat();
-
-    m_taskData.membership.setLength( itGeo.count() );
-    status = itGeo.allPositions( m_taskData.points );
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    m_taskData.weights.setLength( itGeo.count() );
-    int i = 0;
-    
-    bool isNurbsSurface = false;
-    for ( itGeo.reset(); !itGeo.isDone(); itGeo.next(), i++ )
-    {
-		m_taskData.membership[i] = itGeo.index();
-        if ( m_taskData.membership[i] >= m_sortedWeights.size() )
-        {
-            isNurbsSurface = true;
-        }
-        m_taskData.weights[i] = weightValue( data, geomIndex, itGeo.index() );
-    }
-
-    // Update membership indices for nurbs surfaces 
-    // because indices from itGeo return more than cv indices.
-    if ( isNurbsSurface )
-    {
-        int uLimit = data.inputValue( aCVsInU ).asInt();
-        int cvsInV = data.inputValue( aCVsInV ).asInt();
-        int vLimit = cvsInV;
-        if ( !(data.inputValue( aFormInU ).asInt() == 1 &&data.inputValue( aFormInV ).asInt() == 1) )
-        {
-            vLimit -= data.inputValue( aDegreeV ).asInt();
-        }
-        int memberIndex = 0;
-        int cvIndex = 0;
-        for ( int u = 0; u < uLimit; u++ )
-        {
-            for ( int v = 0; v < vLimit; v++ )
-            {
-                int index = cvsInV * u + v;
-                if ( index == m_taskData.membership[memberIndex] )
-                {
-                    m_taskData.membership[memberIndex] = cvIndex;
-                    memberIndex++;
-                }
-                cvIndex++;
-            }
-        }
-    }
-
-    if ( itGeo.count() > 80000 )
-    {
-        MGlobal::displayError( "Demo version has 80000 vertex limit." );
-        return MS::kSuccess;
-    }
-
-    
-
-    m_taskData.drivenMatrix = localToWorldMatrix;
-    m_taskData.drivenInverseMatrix = localToWorldMatrix.inverse();
-    
-    PTHREADDATA pThreadData = NULL;
-    createThreadData( numTasks, &m_taskData, pThreadData );
-    MThreadPool::newParallelRegion( createTasks, (void *)pThreadData );
-
-    status = itGeo.setAllPositions( m_taskData.points );
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-
-    if ( pThreadData )
-    {
-        delete [] pThreadData;
-    }
+MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& localToWorldMatrix,
+                       unsigned int geomIndex) {
+  MStatus status;
+  if (geomIndex >= taskData_.size()) {
+    taskData_.resize(geomIndex+1);
+  }
+  TaskData& taskData = taskData_[geomIndex];
+  
+  // Get driver geo
+  MDataHandle hDriverGeo = data.inputValue(aDriverGeo, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MObject oDriverGeo = hDriverGeo.asMesh();
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  if (oDriverGeo.isNull()) {
+    // Without a driver mesh, we can't do anything
     return MS::kSuccess;
-}
+  }
 
-
-MStatus cvWrap::getBindInfo( MDataBlock& data )
-{
-    MStatus status;
-
-    MArrayDataHandle hSampleWeights = data.inputArrayValue( aSampleWeights );
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    unsigned int numVerts = hSampleWeights.elementCount();
-    if ( numVerts == 0 )
-    {
-        return MS::kNotImplemented;
+  // Only pull bind information from the data block if it is dirty
+  if (dirty_[geomIndex]) {
+    dirty_[geomIndex] = false;
+    status = GetBindInfo(data, geomIndex);
+    if (status == MS::kNotImplemented) {
+      // If no bind information is stored yet, don't do anything.
+      return MS::kSuccess;
+    } else if (MFAIL(status)) {
+      CHECK_MSTATUS_AND_RETURN_IT(status);
     }
+  }
 
-    MArrayDataHandle hComponents = data.inputArrayValue( aSampleComponents, &status );
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    MArrayDataHandle hBindMatrix = data.inputArrayValue( aBindMatrix, &status );
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    MArrayDataHandle hTriangleVerts = data.inputArrayValue( aTriangleVerts, &status );
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    MArrayDataHandle hBarycentricWeights = data.inputArrayValue( aBarycentricWeights, &status );
-    CHECK_MSTATUS_AND_RETURN_IT( status );
-    MObject oWeightData, oComponentData, oNumericData;
-    MIntArray compIds, tempIds;
-    MFnSingleIndexedComponent fnSingleComp;
-    MFnComponentListData fnCompData;
-    MFnNumericData fnNumericData;
-    m_taskData.sortedWeights.resize( numVerts );
-    m_taskData.bindMatrices.setLength( numVerts );
-    m_taskData.triangleVerts.resize( numVerts );
-    m_taskData.barycentricWeights.resize( numVerts );
-    MDoubleArray weights, normalizedWeights;
-    double totalWeight = 0.0;
-    for ( unsigned int i = 0; i < numVerts; i++ )
-    {
-        // Get component ids
-        status = hComponents.jumpToArrayElement( i );
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        oComponentData = hComponents.inputValue().data();
-        status = fnCompData.setObject( oComponentData );
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        compIds.clear();
-        for ( unsigned int j = 0; j < fnCompData.length(); j++ )
-        {
-            if ( fnCompData[j].hasFn( MFn::kSingleIndexedComponent ) )
-            {
-                status = fnSingleComp.setObject( fnCompData[j] );
-                CHECK_MSTATUS_AND_RETURN_IT( status );
-                fnSingleComp.getElements( tempIds );
-                for( unsigned int k = 0; k < tempIds.length(); k++ )
-                {
-                    compIds.append( tempIds[k] );
-                }
-            }
-        }
-        m_taskData.sortedWeights[i].resize( compIds.length() );
-        for ( unsigned int j = 0; j < compIds.length(); j++ )
-        {
-            m_taskData.sortedWeights[i][j].index = compIds[j];
-        }
+  // Get driver geo information
+  MFnMesh fnDriver(oDriverGeo, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  // Get the driver point positions
+  status = fnDriver.getPoints(taskData.driverPoints, MSpace::kWorld);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  unsigned int numDriverPoints = taskData.driverPoints.length();
+  // Get the driver normals
+  taskData.driverNormals.setLength(numDriverPoints);
+  for(unsigned int i = 0; i < numDriverPoints; i++) {
+    status = fnDriver.getVertexNormal(i, false, taskData.driverNormals[i], MSpace::kWorld);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+  }
+  // Get the driver tangents
+  MString uvSet = data.inputValue(aUVSet).asString();
+  status = fnDriver.getTangents(taskData.driverTangents, MSpace::kWorld, &uvSet);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
 
-        // Get sample weights
-        status = hSampleWeights.jumpToArrayElement( i );
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        oWeightData = hSampleWeights.inputValue().data();
-        MFnDoubleArrayData fnDoubleData( oWeightData, &status );
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        weights = fnDoubleData.array();
-        totalWeight = 0.0;
-        for ( unsigned int j = 0; j < weights.length(); j++ )
-        {
-            totalWeight += weights[j];
-            m_taskData.sortedWeights[i][j].weight = weights[j];
-
-        }
-
-        // Calculate normalized weights
-        normalizedWeights.setLength( weights.length() );
-        if ( totalWeight == 0.0 )
-        {
-            CHECK_MSTATUS_AND_RETURN_IT( MS::kFailure );
-        }
-        for ( unsigned int j = 0; j < weights.length(); j++ )
-        {
-            normalizedWeights[j] = weights[j] / totalWeight;
-            m_taskData.sortedWeights[i][j].normalizedWeight = normalizedWeights[j];
-        }
-
-        // Sort weights lowest to highest so we can take the low weight influences away first if
-        // the up vector needs adjustment
-        quickSort( 0, m_taskData.sortedWeights[i].size() - 1, m_taskData.sortedWeights[i] );
-
-        // Get bind matrix
-        status = hBindMatrix.jumpToArrayElement( i );
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        m_taskData.bindMatrices[i] = hBindMatrix.inputValue().asMatrix();
-
-        // Get triangle vertex binding
-        status = hTriangleVerts.jumpToArrayElement( i );
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        int3& verts = hTriangleVerts.inputValue( &status ).asInt3();
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        m_taskData.triangleVerts[i].setLength( 3 );
-        m_taskData.triangleVerts[i][0] = verts[0];
-        m_taskData.triangleVerts[i][1] = verts[1];
-        m_taskData.triangleVerts[i][2] = verts[2];
-
-        // Get barycentric weights
-        status = hBarycentricWeights.jumpToArrayElement( i );
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        float3& baryWeights = hBarycentricWeights.inputValue( &status ).asFloat3();
-        CHECK_MSTATUS_AND_RETURN_IT( status );
-        m_taskData.barycentricWeights[i].setLength( 3 );
-        m_taskData.barycentricWeights[i][0] = baryWeights[0];
-        m_taskData.barycentricWeights[i][1] = baryWeights[1];
-        m_taskData.barycentricWeights[i][2] = baryWeights[2];
-    }
+  // Get the deformer membership and paint weights
+  unsigned int membershipCount = itGeo.count();
+  taskData.membership.setLength(membershipCount);
+  taskData.paintWeights.setLength(membershipCount);
+  status = itGeo.allPositions(taskData.points);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  for (int i = 0; !itGeo.isDone(); itGeo.next(), i++) {
+    taskData.membership[i] = itGeo.index();
+    taskData.paintWeights[i] = weightValue(data, geomIndex, itGeo.index());
+  }
+  
+  taskData.drivenMatrix = localToWorldMatrix;
+  taskData.drivenInverseMatrix = localToWorldMatrix.inverse();
+  
+  // See if we even need to calculate anything.
+  taskData.scale = data.inputValue(aScale).asFloat();
+  taskData.envelope = data.inputValue(envelope).asFloat();
+  int numTasks = data.inputValue(aNumTasks).asInt();
+  if (taskData.envelope == 0.0f || numTasks <= 0) {
     return MS::kSuccess;
+  }
+  CreateThreadData(numTasks, geomIndex);
+  MThreadPool::newParallelRegion(CreateTasks, (void *)threadData_[geomIndex]);
+
+  status = itGeo.setAllPositions(taskData.points);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+
+  return MS::kSuccess;
 }
 
 
-void cvWrap::quickSort( int low, int high, std::vector<Sortable>& values )
-{
-    int i = low;
-    int j = high;
-    double pivot = values[(low + high) / 2].weight;
-    Sortable temp;
-    while ( i <= j )
-    {
-        while ( values[i].weight < pivot )
-        {
-            if ( i + 1 >= values.size() )
-            {
-                break;
-            }
-            i++;
-        }
-        while ( values[j].weight > pivot )
-        {
-            if ( j <= 0 )
-            {
-                break;
-            }
-            j--;
-        }
-        if ( i <= j )
-        {
-            temp = values[i];
-            values[i] = values[j];
-            values[j] = temp;
-            i++;
-            j--;
-        }
+MStatus CVWrap::GetBindInfo(MDataBlock& data, unsigned int geomIndex) {
+  MStatus status;
+  MArrayDataHandle hBindDataArray = data.inputArrayValue(aBindData);
+  status = hBindDataArray.jumpToElement(geomIndex);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MDataHandle hBindData = hBindDataArray.inputValue();
+
+  MArrayDataHandle hSampleWeights = hBindData.child(aSampleWeights);
+  unsigned int numVerts = hSampleWeights.elementCount();
+  if (numVerts == 0) {
+    // No binding information yet.
+    return MS::kNotImplemented;
+  }
+
+  MArrayDataHandle hComponents = hBindData.child(aSampleComponents);
+  MArrayDataHandle hBindMatrix = hBindData.child(aBindMatrix);
+  MArrayDataHandle hTriangleVerts = hBindData.child(aTriangleVerts);
+  MArrayDataHandle hBarycentricWeights = hBindData.child(aBarycentricWeights);
+  hSampleWeights.jumpToElement(0);
+  hComponents.jumpToElement(0);
+  hBindMatrix.jumpToElement(0);
+  hTriangleVerts.jumpToElement(0);
+  hBarycentricWeights.jumpToElement(0);
+  MFnSingleIndexedComponent fnSingleComp;
+  MFnComponentListData fnCompData;
+  MFnNumericData fnNumericData;
+  TaskData& taskData = taskData_[geomIndex];
+  taskData.bindMatrices.setLength(numVerts);
+  taskData.triangleVerts.resize(numVerts);
+  taskData.sampleIds.resize(numVerts);
+  taskData.baryCoords.resize(numVerts);
+  taskData.sampleWeights.resize(numVerts);
+  for (unsigned int i = 0; i < numVerts; ++i) {
+    int logicalIndex = hComponents.elementIndex();
+    if (logicalIndex >= taskData.bindMatrices.length()) {
+      // Nurbs surfaces may be sparse so make sure we have enough space.
+      taskData.bindMatrices.setLength(logicalIndex+1);
+      taskData.triangleVerts.resize(logicalIndex+1);
+      taskData.sampleIds.resize(logicalIndex+1);
+      taskData.baryCoords.resize(logicalIndex+1);
+      taskData.sampleWeights.resize(logicalIndex+1);
     }
-    if ( low < j )
-    {
-        quickSort( low, j, values );
+
+    // Get sample ids
+    MObject oComponentData = hComponents.inputValue().data();
+    status = fnCompData.setObject(oComponentData);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MIntArray& sampleIds = taskData.sampleIds[logicalIndex];
+    for (unsigned int j = 0; j < fnCompData.length(); j++) {
+      if (fnCompData[j].hasFn(MFn::kSingleIndexedComponent)) {
+        status = fnSingleComp.setObject(fnCompData[j]);
+        CHECK_MSTATUS_AND_RETURN_IT(status);
+        MIntArray tempIds;
+        fnSingleComp.getElements(tempIds);
+        for(unsigned int k = 0; k < tempIds.length(); k++) {
+          sampleIds.append(tempIds[k]);
+        }
+      }
     }
-    if ( i < high )
-    {
-        quickSort( i, high, values );
-    }
+
+    // Get sample weights
+    MObject oWeightData = hSampleWeights.inputValue().data();
+    MFnDoubleArrayData fnDoubleData(oWeightData, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    taskData.sampleWeights[logicalIndex] = fnDoubleData.array();
+
+    // Get bind matrix
+    taskData.bindMatrices[logicalIndex] = hBindMatrix.inputValue().asMatrix();
+
+    // Get triangle vertex binding
+    int3& verts = hTriangleVerts.inputValue(&status).asInt3();
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MIntArray& triangleVerts = taskData.triangleVerts[logicalIndex];
+    triangleVerts.setLength(3);
+    triangleVerts[0] = verts[0];
+    triangleVerts[1] = verts[1];
+    triangleVerts[2] = verts[2];
+
+    // Get barycentric weights
+    float3& baryWeights = hBarycentricWeights.inputValue(&status).asFloat3();
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    BaryCoords& coords = taskData.baryCoords[logicalIndex];
+    coords[0] = baryWeights[0];
+    coords[1] = baryWeights[1];
+    coords[2] = baryWeights[2];
+
+    hSampleWeights.next();
+    hComponents.next();
+    hBindMatrix.next();
+    hTriangleVerts.next();
+    hBarycentricWeights.next();
+  }
+  return MS::kSuccess;
 }
 
 
-void cvWrap::createThreadData( int numTasks, TASKDATA *pTaskData, PTHREADDATA &pThreadData )
-{
-    if ( pThreadData )
-    {
-        delete [] pThreadData;
+void CVWrap::CreateThreadData(int numTasks, unsigned int geomIndex) {
+  if (geomIndex >= threadData_.size()) {
+    // Make sure a ThreadData object exists for this geomIndex.
+    size_t currentSize = threadData_.size();
+    threadData_.resize(geomIndex+1);
+    for (size_t i = currentSize; i < geomIndex+1; ++i) {
+      threadData_[i] = new ThreadData[numTasks];
     }
-    pThreadData = new THREADDATA[numTasks];
-    unsigned int taskLength = (pTaskData->points.length() + numTasks - 1) / numTasks;
-    unsigned int start = 0;
-    unsigned int end = taskLength;
+  } else {
+    // Make sure the number of ThreadData instances is correct for this geomIndex
+    if (threadData_[geomIndex][0].numTasks != numTasks) {
+      delete [] threadData_[geomIndex];
+      threadData_[geomIndex] = new ThreadData[numTasks];
+    }
+  }
+  TaskData& taskData = taskData_[geomIndex];
+  unsigned int taskLength = (taskData.points.length() + numTasks - 1) / numTasks;
+  unsigned int start = 0;
+  unsigned int end = taskLength;
+  int lastTask = numTasks - 1;
+  for(int i = 0; i < numTasks; i++) {
+    if (i == lastTask) {
+      end = taskData.points.length();
+    }
+    threadData_[geomIndex][i].start = start;
+    threadData_[geomIndex][i].end = end;
+    threadData_[geomIndex][i].numTasks = numTasks;
+    threadData_[geomIndex][i].pData = &taskData;
 
-    int lastTask = numTasks - 1;
-	for( int i = 0; i < numTasks; i++ )
-	{
-        if ( i == lastTask )
-        {
-            end = pTaskData->points.length();
-        }
-        pThreadData[i].start = start;
-        pThreadData[i].end = end;
-        pThreadData[i].numTasks = numTasks;
-        pThreadData[i].pData = pTaskData;
-
-        start += taskLength;
-        end += taskLength;
-	}
+    start += taskLength;
+    end += taskLength;
+  }
 }
 
 
-void cvWrap::createTasks( void *pData, MThreadRootTask *pRoot )
-{
-    THREADDATA * pThreadData = (THREADDATA *)pData;
+void CVWrap::CreateTasks(void *pData, MThreadRootTask *pRoot) {
+  ThreadData* threadData = static_cast<ThreadData*>(pData);
 
-	if ( pThreadData )
-	{
-        int numTasks = pThreadData->numTasks;
-		for( int i = 0; i < numTasks; i++ )
-		{
-            MThreadPool::createTask( threadEvaluate, (void *)&pThreadData[i], pRoot );
-		}
-		MThreadPool::executeAndJoin( pRoot );
-	}
+  if (threadData) {
+    int numTasks = threadData[0].numTasks;
+    for(int i = 0; i < numTasks; i++) {
+      MThreadPool::createTask(threadEvaluate, (void *)&threadData[i], pRoot);
+    }
+    MThreadPool::executeAndJoin(pRoot);
+  }
 }
 
 
-MThreadRetVal cvWrap::threadEvaluate( void *pParam )
+MThreadRetVal CVWrap::threadEvaluate(void *pParam)
 {
     PTHREADDATA pThreadData = (PTHREADDATA)(pParam);
     PTASKDATA pData = pThreadData->pData;
@@ -433,9 +377,9 @@ MThreadRetVal cvWrap::threadEvaluate( void *pParam )
     MPoint origin, newPt, pt;
     MVector normal, up;
     MMatrix matrix;
-	for ( unsigned int i = taskStart; i < taskEnd; i++ )
+  for (unsigned int i = taskStart; i < taskEnd; i++)
     {
-        if ( i >= numDeformVerts )
+        if (i >= numDeformVerts)
         {
             continue;
         }
@@ -443,15 +387,15 @@ MThreadRetVal cvWrap::threadEvaluate( void *pParam )
         numSamples = sortedWeights[index].size();
 
         // Reconstruct origin
-        origin = (MVector( driverPoints[triangleVerts[index][0]] ) * barycentricWeights[index][0]) + 
-            (MVector( driverPoints[triangleVerts[index][1]] ) * barycentricWeights[index][1]) +
-            (MVector( driverPoints[triangleVerts[index][2]] ) * barycentricWeights[index][2]);
+        origin = (MVector(driverPoints[triangleVerts[index][0]]) * barycentricWeights[index][0]) + 
+            (MVector(driverPoints[triangleVerts[index][1]]) * barycentricWeights[index][1]) +
+            (MVector(driverPoints[triangleVerts[index][2]]) * barycentricWeights[index][2]);
 
 
         // Reconstruct normal and up vector
         normal = MVector::zero;
         up = MVector::zero;
-        for ( unsigned int j = 0; j < numSamples; j++ )
+        for (unsigned int j = 0; j < numSamples; j++)
         {
             normal += driverNormals[sortedWeights[index][j].index] * sortedWeights[index][j].normalizedWeight;
             up += (driverPoints[sortedWeights[index][j].index] - origin) * sortedWeights[index][j].normalizedWeight;
@@ -460,11 +404,11 @@ MThreadRetVal cvWrap::threadEvaluate( void *pParam )
         normal *= scale;
 
         // If the up and normal or parallel or the up has 0 length, take out some influence.
-        if ( up * normal == 1.0 || up.length() < 0.0001 )
+        if (up * normal == 1.0 || up.length() < 0.0001)
         {
-            for ( unsigned int j = 0; j < numSamples; j++ )
+            for (unsigned int j = 0; j < numSamples; j++)
             {
-                if ( up * normal != 1.0 && up.length() > 0.0001 )
+                if (up * normal != 1.0 && up.length() > 0.0001)
                 {
                     break;
                 }
@@ -474,7 +418,7 @@ MThreadRetVal cvWrap::threadEvaluate( void *pParam )
 
         up.normalize();
         
-        createMatrix( matrix, origin, normal, up );
+        createMatrix(matrix, origin, normal, up);
         
         pt = points[i];
         newPt = ((pt  * drivenMatrix) * (bindMatrices[index] * matrix)) * drivenInverseMatrix;
@@ -484,7 +428,7 @@ MThreadRetVal cvWrap::threadEvaluate( void *pParam )
 }
 
 
-void cvWrap::createMatrix( MMatrix& matrix, MPoint& origin, MVector& normal, MVector& up )
+void CVWrap::createMatrix(MMatrix& matrix, MPoint& origin, MVector& normal, MVector& up)
 {
     MVector x = normal ^ up;
     up = normal ^ x;
@@ -495,80 +439,6 @@ void cvWrap::createMatrix( MMatrix& matrix, MPoint& origin, MVector& normal, MVe
 }
 
 
-MStatus cvWrap::initialize()
-{
-    MFnCompoundAttribute    cAttr;
-    MFnMatrixAttribute      mAttr;
-    MFnMessageAttribute     meAttr;
-    MFnTypedAttribute       tAttr;
-    MFnGenericAttribute     gAttr;
-    MFnNumericAttribute     nAttr;
-	MStatus				    status;
 
-    aDriverGeo = tAttr.create( "driver", "driver", MFnData::kMesh );
-    addAttribute( aDriverGeo );
-    attributeAffects( aDriverGeo, outputGeom );
-
-    aBindDriverGeo = meAttr.create( "bindMesh", "bindMesh" );
-    addAttribute( aBindDriverGeo );
-
-    aSampleComponents = tAttr.create( "sampleComponents", "sampleComponents", MFnData::kComponentList );
-    tAttr.setArray( true );
-    addAttribute( aSampleComponents );
-
-    aSampleWeights = tAttr.create( "sampleWeights", "sampleWeights", MFnData::kDoubleArray );
-    tAttr.setArray( true );
-    addAttribute( aSampleWeights );
-
-    aBindMatrix = mAttr.create( "bindMatrix", "bindMatrix" );
-    mAttr.setDefault( MMatrix::identity );
-    mAttr.setArray( true );
-    addAttribute( aBindMatrix );
-
-    aTriangleVerts = nAttr.create( "triangleVerts", "triangleVerts", MFnNumericData::k3Int );
-    nAttr.setArray( true );
-    addAttribute( aTriangleVerts );
-
-    aBarycentricWeights = nAttr.create( "barycentricWeights", "barycentricWeights", MFnNumericData::k3Float );
-    nAttr.setArray( true );
-    addAttribute( aBarycentricWeights );
-
-    aScale = nAttr.create( "scale", "scale", MFnNumericData::kFloat, 1.0 );
-    nAttr.setKeyable( true );
-    addAttribute( aScale );
-    attributeAffects( aScale, outputGeom );
-
-    aNumTasks = nAttr.create( "numTasks", "numTasks", MFnNumericData::kInt, 32 );
-    nAttr.setMin( 1 );
-    addAttribute( aNumTasks );
-
-    aDirty = nAttr.create( "dirty", "dirty", MFnNumericData::kBoolean );
-    addAttribute( aDirty );
-    attributeAffects( aDirty, outputGeom );
-
-    aCVsInU = nAttr.create( "cvsInU", "cvsInU", MFnNumericData::kInt, 0 );
-    nAttr.setHidden( true );
-    addAttribute( aCVsInU );
-
-    aCVsInV = nAttr.create( "cvsInV", "cvsInV", MFnNumericData::kInt, 0 );
-    nAttr.setHidden( true );
-    addAttribute( aCVsInV );
-
-    aFormInU = nAttr.create( "formInU", "formInU", MFnNumericData::kInt, 0 );
-    nAttr.setHidden( true );
-    addAttribute( aFormInU );
-
-    aFormInV = nAttr.create( "formInV", "formInV", MFnNumericData::kInt, 0 );
-    nAttr.setHidden( true );
-    addAttribute( aFormInV );
-
-    aDegreeV = nAttr.create( "degreesV", "degreesV", MFnNumericData::kInt, 0 );
-    nAttr.setHidden( true );
-    addAttribute( aDegreeV );
-
-	MGlobal::executeCommand( "makePaintable -attrType multiFloat -sm deformer cvWrap weights" );
-    
-    return MS::kSuccess;
-}
 
 

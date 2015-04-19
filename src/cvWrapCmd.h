@@ -3,6 +3,7 @@
 
 #include <maya/MArgList.h>
 #include <maya/MDagPath.h>
+#include <maya/MDagPathArray.h>
 #include <maya/MDGModifier.h>
 #include <maya/MFloatArray.h>
 #include <maya/MPlug.h>
@@ -24,15 +25,15 @@
   The cvWrap command is used to create new cvWrap deformers and to import and export
   wrap bindings.
 */
-class CVWrapCmd : public MPxCommand {							
+class CVWrapCmd : public MPxCommand {              
  public:
   enum CommandMode { kCommandCreate, kCommandExport, kCommandImport, kCommandHelp };
-  CVWrapCmd();							
-	virtual MStatus	doIt(const MArgList&);
-	virtual MStatus	undoIt();
-	virtual MStatus	redoIt();
-	virtual bool isUndoable() const;
-	static void* creator();		
+  CVWrapCmd();              
+  virtual MStatus  doIt(const MArgList&);
+  virtual MStatus  undoIt();
+  virtual MStatus  redoIt();
+  virtual bool isUndoable() const;
+  static void* creator();    
   static MSyntax newSyntax();
 
   const static char* kName;  /**< The name of the command. */
@@ -152,12 +153,12 @@ class CVWrapCmd : public MPxCommand {
   MSelectionList selectionList_;  /**< Selected command input nodes. */
   MObject oWrapNode_;  /**< MObject to the cvWrap node in focus. */
   MDagPath pathDriver_;  /**< Path to the shape wrapping the other shape. */
-  MDagPath pathDriven_;  /**< Path to the shape being wrapped. */
+  MDagPathArray pathDriven_;  /**< Paths to the shapes being wrapped. */
   MDGModifier dgMod_;
-  MStringArray    m_createdNodes;
+  MStringArray bindMeshes_;
 
   
-};	
+};  
 
 
 

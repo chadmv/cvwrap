@@ -8,19 +8,13 @@
 #include <maya/MFloatArray.h>
 #include <maya/MFloatVectorArray.h>
 #include <maya/MFnComponentListData.h>
-#include <maya/MFnCompoundAttribute.h>
 #include <maya/MFnData.h>
 #include <maya/MFnDoubleArrayData.h>
-#include <maya/MFnGenericAttribute.h>
 #include <maya/MFnIntArrayData.h>
-#include <maya/MFnMatrixAttribute.h>
 #include <maya/MFnMesh.h>
-#include <maya/MFnMessageAttribute.h>
-#include <maya/MFnNumericAttribute.h>
 #include <maya/MFnNurbsCurve.h>
 #include <maya/MFnNurbsSurface.h>
 #include <maya/MFnSingleIndexedComponent.h>
-#include <maya/MFnTypedAttribute.h>
 #include <maya/MFnVectorArrayData.h>
 #include <maya/MGlobal.h>
 #include <maya/MIntArray.h>
@@ -30,8 +24,6 @@
 #include <maya/MPlug.h> 
 #include <maya/MPoint.h> 
 #include <maya/MPointArray.h> 
-#include <maya/MQuaternion.h>
-#include <maya/MThreadPool.h>
 #include <maya/MTransformationMatrix.h>
 #include <maya/MTypeId.h> 
 #include <maya/MVector.h>
@@ -43,63 +35,61 @@
 #include <maya/MPxDeformerNode.h>
 
 
+#include <map>
 #include <vector>
+#include "common.h"
 
-struct Sortable
-{
-    double weight;
-    double normalizedWeight;
-    int index;
+struct TaskData {
+  MMatrix driverMatrix;
+  MMatrix drivenMatrix;
+  MMatrix drivenInverseMatrix;
+  float envelope;
+  float scale;
+
+  MIntArray membership;
+  MFloatArray paintWeights;
+  MPointArray points;
+
+  MPointArray driverPoints;
+  MVectorArray driverNormals;
+  MFloatVectorArray driverTangents;
+  MMatrixArray bindMatrices;
+  std::vector<MIntArray> triangleVerts;
+  std::vector<MIntArray> sampleIds;
+  std::vector<BaryCoords> baryCoords;
+  std::vector<MDoubleArray> sampleWeights;
 };
-
-typedef struct TaskData 
-{
-    float envelope;
-    MIntArray membership;
-    MFloatArray weights;
-    MPointArray points;
-
-    MPointArray driverPoints;
-    MVectorArray driverNormals;
-    std::vector< std::vector <Sortable> > sortedWeights;
-    MMatrixArray bindMatrices;
-    std::vector<MIntArray> triangleVerts;
-    std::vector<MFloatArray> barycentricWeights;
-    MMatrix driverMatrix;
-    MMatrix drivenMatrix;
-    MMatrix drivenInverseMatrix;
-    float scale;
-} TASKDATA, *PTASKDATA;
  
 
-typedef struct ThreadData
-{
-    unsigned int start;
-    unsigned int end;
-    unsigned int numTasks;
-    PTASKDATA pData;
-} THREADDATA, *PTHREADDATA;
+struct ThreadData {
+  unsigned int start;
+  unsigned int end;
+  unsigned int numTasks;
+  TaskData* pData;
+};
 
 
-class cvWrap : public MPxDeformerNode {
+class CVWrap : public MPxDeformerNode {
  public:
-  cvWrap();
-  virtual ~cvWrap(); 
+  CVWrap();
+  virtual ~CVWrap(); 
   virtual MStatus deform(MDataBlock& data, MItGeometry& iter, const MMatrix& mat,
                          unsigned int mIndex);
+  virtual MStatus setDependentsDirty(const MPlug& plugBeingDirtied, MPlugArray& affectedPlugs);
 
-  MStatus getBindInfo( MDataBlock& data );
-  static void quickSort( int low, int high, std::vector<Sortable>& values );
+  MStatus GetBindInfo(MDataBlock& data, unsigned int geomIndex);
 
   static void* creator();
   static MStatus initialize();
-  void createThreadData(int numTasks, TASKDATA *pTaskData, PTHREADDATA &pThreadData);
-  static void createTasks(void *data, MThreadRootTask *pRoot);
+  void CreateThreadData(int numTasks, unsigned int geomIndex);
+  static void CreateTasks(void *data, MThreadRootTask *pRoot);
   static MThreadRetVal threadEvaluate(void *pParam);
   static void createMatrix(MMatrix& matrix, MPoint& origin, MVector& normal, MVector& up);
     
+  const static char* kName;  /**< The name of the node. */
   static MObject aBindDriverGeo;
   static MObject aDriverGeo;
+  static MObject aBindData;
   static MObject aSampleVerts;
   static MObject aRadius;
   static MObject aBindInfo;
@@ -108,22 +98,18 @@ class cvWrap : public MPxDeformerNode {
   static MObject aBindMatrix;
   static MObject aTriangleVerts;
   static MObject aBarycentricWeights;
+  static MObject aUVSet;
   static MObject aNumTasks;
-  static MObject aDirty;
   static MObject aScale;
-  static MObject aCVsInU;
-  static MObject aCVsInV;
-  static MObject aFormInU;
-  static MObject aFormInV;
-  static MObject aDegreeV;
-  static  MTypeId        id;
+  static MTypeId id;
 
 private:
-    std::vector< std::vector <Sortable> > m_sortedWeights;
-    MMatrixArray m_bindMatrices;
-    std::vector<MIntArray> m_triangleVerts;
-    std::vector<MFloatArray> m_barycentricWeights;
-    TASKDATA m_taskData;
+  std::map<unsigned int, bool> dirty_;
+  MMatrixArray m_bindMatrices;
+  std::vector<MIntArray> m_triangleVerts;
+  std::vector<MFloatArray> m_barycentricWeights;
+  std::vector<TaskData> taskData_;  /**< Per geometry evaluation data. */
+  std::vector<ThreadData*> threadData_;
 
 };
 
