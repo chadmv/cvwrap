@@ -246,6 +246,7 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
       verticesToVisit.push(data);
     }
   }
+  assert(distances.size() > 0);
   return MS::kSuccess;
 }
 

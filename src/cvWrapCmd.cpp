@@ -8,7 +8,9 @@
 #include <maya/MItSelectionList.h>
 #include <maya/MMeshIntersector.h>
 #include <maya/MSyntax.h>
+#include <cassert>
 
+#define PROGRESS_STEP 100
 
 const char* CVWrapCmd::kName = "cvWrap";
 const char* CVWrapCmd::kNameFlagShort = "-n";
@@ -349,6 +351,11 @@ MStatus CVWrapCmd::CalculateBinding() {
     CHECK_MSTATUS_AND_RETURN_IT(status);
   }
 
+  // Store the UV set
+  MPlug plugUVSet(oWrapNode_, CVWrap::aUVSet);
+  status = plugUVSet.setString(uvset_);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+
   // We need the adjacency of each vertex in order to crawl the mesh.
   std::vector<std::set<int> > adjacency;
   status = GetAdjacency(pathDriver_, adjacency);
@@ -358,16 +365,18 @@ MStatus CVWrapCmd::CalculateBinding() {
   MFloatVectorArray normals, tangents;
   fnDriverMesh.getPoints(points, MSpace::kWorld);
   fnDriverMesh.getVertexNormals(false, normals, MSpace::kWorld);
-  fnDriverMesh.getTangents(tangents, MSpace::kWorld);
+  fnDriverMesh.getTangents(tangents, MSpace::kWorld, &uvset_);
 
   MFnSingleIndexedComponent fnComp;
   MFnComponentListData fnCompData;
   
+  
+
   MPlug plugBindData(oWrapNode_, CVWrap::aBindData);
   
   MFnNumericData fnNumericData;
   MFnMatrixData fnMatrixData;
-  for (unsigned int geomIndex = 0; geomIndex < pathDriven_.length; ++geomIndex) {
+  for (unsigned int geomIndex = 0; geomIndex < pathDriven_.length(); ++geomIndex) {
     // Get the plugs to the binding attributes for this geometry
     MPlug plugBind = plugBindData.elementByLogicalIndex(geomIndex, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -379,15 +388,16 @@ MStatus CVWrapCmd::CalculateBinding() {
     CHECK_MSTATUS_AND_RETURN_IT(status);
     MPlug plugTriangleVerts = plugBind.child(CVWrap::aTriangleVerts, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugTangentIndices = plugBind.child(CVWrap::aTangentIndices, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
     MPlug plugBarycentricWeights = plugBind.child(CVWrap::aBarycentricWeights, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
     MItGeometry itGeo(pathDriven_[geomIndex], &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-
     // Start progress bar
     StartProgress("Binding wrap...", itGeo.count());
-
-    for (int ii = 0; !itGeo.isDone(); itGeo.next(), ++ii) {
+    int ii;
+    for (ii = 0; !itGeo.isDone(); itGeo.next(), ++ii) {
       // We need to calculate a bind matrix for each component.
       // The closest point will be the origin of the coordinate system.
       // The weighted normal of the vertices in the sample radius will be one axis.
@@ -411,13 +421,15 @@ MStatus CVWrapCmd::CalculateBinding() {
 
       // Crawl the surface to find all the vertices within the sample radius.
       std::map<int, double> distances;
-      vertexList.clear();
       CrawlSurface(closestPoint, vertexList, points, radius_, adjacency, distances);
 
       // Calculate the weight values per sampled vertex
       MIntArray sampleIds;
       MDoubleArray weights;
       CalculateSampleWeights(distances, radius_, sampleIds, weights);
+
+      assert(weights.length() == (unsigned int)distances.size());
+      assert(weights.length() == sampleIds.length());
 
       // Get barycentric coordinates of closestPoint
       int triangleVertices[3];
@@ -429,10 +441,11 @@ MStatus CVWrapCmd::CalculateBinding() {
                                 coords);
 
       // Calculate the up vector from the tangents
+      int tangentIndices[3];
       MVector up;
       for (int j = 0; j < 3; ++j) {
-        int tangentId = fnDriverMesh.getTangentId(faceId, triangleVertices[j]);
-        up += tangents[tangentId] * coords[j];
+        tangentIndices[j] = fnDriverMesh.getTangentId(faceId, triangleVertices[j]);
+        up += tangents[tangentIndices[j]] * coords[j];
       }
       up.normalize();
 
@@ -481,6 +494,14 @@ MStatus CVWrapCmd::CalculateBinding() {
       plugTriangleVerts.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
       CHECK_MSTATUS_AND_RETURN_IT(status);
 
+      // Store tangent indices
+      oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      status = fnNumericData.setData3Int(tangentIndices[0], tangentIndices[1], tangentIndices[2]);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugTangentIndices.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
       // Store barycentric coordinates
       oNumericData = fnNumericData.create(MFnNumericData::k3Float, &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -490,11 +511,13 @@ MStatus CVWrapCmd::CalculateBinding() {
       CHECK_MSTATUS_AND_RETURN_IT(status);
 
       // Increment the progress bar on every 250 verts because updating the UI is slow.
-      if (ii % 250 == 0 && ii != 0) {
-        StepProgress(250);
-        if (ProgressCancelled()) {
+      if (ii % PROGRESS_STEP == 0 && ii != 0) {
+        StepProgress(PROGRESS_STEP);
+        // BUG with progress cancelation when using a marking menu.  Uncomment when it is fixed
+        /*if (ProgressCancelled()) {
+          EndProgress();
           break;
-        }
+        }*/
       }
     }
 
@@ -568,7 +591,7 @@ MStatus CVWrapCmd::ExportBinding()
     MFnDependencyNode fnWrapNode(oWrapNode_, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
 
-    if (fnWrapNode.typeId() != cvWrap::id)
+    if (fnWrapNode.typeId() != CVWrap::id)
     {
         CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
     }
@@ -593,11 +616,11 @@ MStatus CVWrapCmd::ExportBinding()
     MIntArray tempIds;
     MObject oComp;
 
-    MPlug plugSampleWeights(oWrapNode_, cvWrap::aSampleWeights);
-    MPlug plugSampleVerts(oWrapNode_, cvWrap::aSampleComponents);
-    MPlug plugSampleBindMatrix(oWrapNode_, cvWrap::aBindMatrix);
-    MPlug plugTriangleVerts(oWrapNode_, cvWrap::aTriangleVerts);
-    MPlug plugBarycentricWeights(oWrapNode_, cvWrap::aBarycentricWeights);
+    MPlug plugSampleWeights(oWrapNode_, CVWrap::aSampleWeights);
+    MPlug plugSampleVerts(oWrapNode_, CVWrap::aSampleComponents);
+    MPlug plugSampleBindMatrix(oWrapNode_, CVWrap::aBindMatrix);
+    MPlug plugTriangleVerts(oWrapNode_, CVWrap::aTriangleVerts);
+    MPlug plugBarycentricWeights(oWrapNode_, CVWrap::aBarycentricWeights);
 
     float version = 1.0f;
     out.write((char *)&version, sizeof(float));
@@ -764,11 +787,11 @@ MStatus CVWrapCmd::ImportBinding()
     MIntArray sampleIds;
     MFnDoubleArrayData fnDoubleData;
 
-    MPlug plugSampleWeights(oWrapNode_, cvWrap::aSampleWeights);
-    MPlug plugSampleVerts(oWrapNode_, cvWrap::aSampleComponents);
-    MPlug plugSampleBindMatrix(oWrapNode_, cvWrap::aBindMatrix);
-    MPlug plugTriangleVerts(oWrapNode_, cvWrap::aTriangleVerts);
-    MPlug plugBarycentricWeights(oWrapNode_, cvWrap::aBarycentricWeights);
+    MPlug plugSampleWeights(oWrapNode_, CVWrap::aSampleWeights);
+    MPlug plugSampleVerts(oWrapNode_, CVWrap::aSampleComponents);
+    MPlug plugSampleBindMatrix(oWrapNode_, CVWrap::aBindMatrix);
+    MPlug plugTriangleVerts(oWrapNode_, CVWrap::aTriangleVerts);
+    MPlug plugBarycentricWeights(oWrapNode_, CVWrap::aBarycentricWeights);
 
     float version;
     in.read((char *)(&version), sizeof(float));

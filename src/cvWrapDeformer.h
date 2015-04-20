@@ -12,18 +12,16 @@
 #include <maya/MFnDoubleArrayData.h>
 #include <maya/MFnIntArrayData.h>
 #include <maya/MFnMesh.h>
-#include <maya/MFnNurbsCurve.h>
-#include <maya/MFnNurbsSurface.h>
 #include <maya/MFnSingleIndexedComponent.h>
 #include <maya/MFnVectorArrayData.h>
 #include <maya/MGlobal.h>
 #include <maya/MIntArray.h>
 #include <maya/MMatrix.h> 
 #include <maya/MMatrixArray.h> 
-#include <maya/MNodeMessage.h> 
 #include <maya/MPlug.h> 
 #include <maya/MPoint.h> 
 #include <maya/MPointArray.h> 
+#include <maya/MThreadPool.h>
 #include <maya/MTransformationMatrix.h>
 #include <maya/MTypeId.h> 
 #include <maya/MVector.h>
@@ -55,6 +53,7 @@ struct TaskData {
   MFloatVectorArray driverTangents;
   MMatrixArray bindMatrices;
   std::vector<MIntArray> triangleVerts;
+  std::vector<MIntArray> tangentIndices;
   std::vector<MIntArray> sampleIds;
   std::vector<BaryCoords> baryCoords;
   std::vector<MDoubleArray> sampleWeights;
@@ -81,10 +80,22 @@ class CVWrap : public MPxDeformerNode {
 
   static void* creator();
   static MStatus initialize();
-  void CreateThreadData(int numTasks, unsigned int geomIndex);
+
+  /**
+    Creates the data stuctures that will be sent to each thread.  Divides the vertices into
+    discrete chunks to be evaluated in the threads.
+    @param[in] taskCount The number of individual tasks we want to divide the calculation into.
+    @param[in] geomIndex The index of the input geometry we are evaluating.
+  */
+  void CreateThreadData(int taskCount, unsigned int geomIndex);
+
+  /**
+    Distributes the ThreadData objects to the parallel threads.
+    @param[in] data The user defined data.  In this case, the ThreadData array.
+    @param[in] pRoot Maya's root task.
+  */
   static void CreateTasks(void *data, MThreadRootTask *pRoot);
-  static MThreadRetVal threadEvaluate(void *pParam);
-  static void createMatrix(MMatrix& matrix, MPoint& origin, MVector& normal, MVector& up);
+  static MThreadRetVal EvaluateWrap(void *pParam);
     
   const static char* kName;  /**< The name of the node. */
   static MObject aBindDriverGeo;
@@ -96,7 +107,10 @@ class CVWrap : public MPxDeformerNode {
   static MObject aSampleComponents;
   static MObject aSampleWeights;
   static MObject aBindMatrix;
+  /** The vertex indices of the triangle containing the origin of each coordinate system. */
   static MObject aTriangleVerts;
+  /** The indices of the tangents used to calculate the up vector. */
+  static MObject aTangentIndices;  
   static MObject aBarycentricWeights;
   static MObject aUVSet;
   static MObject aNumTasks;
@@ -105,9 +119,6 @@ class CVWrap : public MPxDeformerNode {
 
 private:
   std::map<unsigned int, bool> dirty_;
-  MMatrixArray m_bindMatrices;
-  std::vector<MIntArray> m_triangleVerts;
-  std::vector<MFloatArray> m_barycentricWeights;
   std::vector<TaskData> taskData_;  /**< Per geometry evaluation data. */
   std::vector<ThreadData*> threadData_;
 
