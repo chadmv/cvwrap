@@ -49,24 +49,12 @@ struct TaskData {
   MPointArray points;
 
   MPointArray driverPoints;
-  MVectorArray driverNormals;
-  MFloatVectorArray driverTangents;
+  MFloatVectorArray driverNormals;
   MMatrixArray bindMatrices;
-  std::vector<MIntArray> triangleVerts;
-  std::vector<MIntArray> tangentIndices;
   std::vector<MIntArray> sampleIds;
-  std::vector<BaryCoords> baryCoords;
   std::vector<MDoubleArray> sampleWeights;
 };
  
-
-struct ThreadData {
-  unsigned int start;
-  unsigned int end;
-  unsigned int numTasks;
-  TaskData* pData;
-};
-
 
 class CVWrap : public MPxDeformerNode {
  public:
@@ -81,13 +69,6 @@ class CVWrap : public MPxDeformerNode {
   static void* creator();
   static MStatus initialize();
 
-  /**
-    Creates the data stuctures that will be sent to each thread.  Divides the vertices into
-    discrete chunks to be evaluated in the threads.
-    @param[in] taskCount The number of individual tasks we want to divide the calculation into.
-    @param[in] geomIndex The index of the input geometry we are evaluating.
-  */
-  void CreateThreadData(int taskCount, unsigned int geomIndex);
 
   /**
     Distributes the ThreadData objects to the parallel threads.
@@ -107,12 +88,6 @@ class CVWrap : public MPxDeformerNode {
   static MObject aSampleComponents;
   static MObject aSampleWeights;
   static MObject aBindMatrix;
-  /** The vertex indices of the triangle containing the origin of each coordinate system. */
-  static MObject aTriangleVerts;
-  /** The indices of the tangents used to calculate the up vector. */
-  static MObject aTangentIndices;  
-  static MObject aBarycentricWeights;
-  static MObject aUVSet;
   static MObject aNumTasks;
   static MObject aScale;
   static MTypeId id;
@@ -120,7 +95,7 @@ class CVWrap : public MPxDeformerNode {
 private:
   std::map<unsigned int, bool> dirty_;
   std::vector<TaskData> taskData_;  /**< Per geometry evaluation data. */
-  std::vector<ThreadData*> threadData_;
+  std::vector<ThreadData<TaskData>*> threadData_;
 
 };
 

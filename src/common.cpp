@@ -5,6 +5,7 @@
 #include <maya/MFnMesh.h>
 #include <maya/MItMeshVertex.h>
 #include <maya/MSelectionList.h>
+#include <algorithm>
 #include <cassert>
 #include <set>
 #include <queue>
@@ -125,44 +126,6 @@ MStatus DeleteIntermediateObjects(MDagPath& path) {
 }
 
 
-double DistanceSquared(const MPoint& p1, const MPoint& p2) {
-  double xx = p2.x - p1.x;
-  double yy = p2.y - p1.y;
-  double zz = p2.z - p1.z;
-  return (xx*xx) + (yy*yy) + (zz*zz);
-}
-
-
-void GetBarycentricCoordinates(const MPoint& P, const MPoint& A, const MPoint& B, const MPoint& C,
-                               BaryCoords& coords) {
-  // Compute the normal of the triangle
-  MVector N = (B - A) ^ (C - A);
-  MVector unitN = N.normal();
-
-  // Compute twice area of triangle ABC
-  double areaABC = unitN * N;
-
-  if (areaABC == 0.0) {
-    // If the triangle is degenerate, just use one of the points.
-    coords[0] = 1.0f;
-    coords[1] = 0.0f;
-    coords[2] = 0.0f;
-    return;
-  }
-
-  // Compute a
-  double areaPBC = unitN * ((B - P) ^ (C - P));
-  coords[0] = (float)(areaPBC / areaABC);
-
-  // Compute b
-  double areaPCA = unitN * ((C - P) ^ (A - P));
-  coords[1] = (float)(areaPCA / areaABC);
-
-  // Compute c
-  coords[2] = 1.0f - coords[0] - coords[1];
-}
-
-
 MStatus GetAdjacency(MDagPath& pathMesh, std::vector<std::set<int> >& adjacency) {
   MStatus status;
   // Get mesh adjacency.  The adjacency will be all vertex ids on the connected faces.
@@ -250,23 +213,52 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
   return MS::kSuccess;
 }
 
+bool SampleSort(std::pair<int, double> lhs, std::pair<int, double> rhs) {
+  return (lhs.second < rhs.second); 
+}
 
 void CalculateSampleWeights(const std::map<int, double>& distances, double radius,
                             MIntArray& vertexIds, MDoubleArray& weights) {
-  unsigned int length = (unsigned int)distances.size();
-  weights.setLength(length);
-  vertexIds.setLength(length);
-  int ii = 0;
-  // Use a gaussian function to calculate the sample weights.
-  // sigmaSquared corresponds to the width of the bell curve.
-  double sigmaSquared = (radius * radius) * 0.75;
+  // If the radius was smaller than the distances to the vertices on the closest face,
+  // increase the radius so we get a positive weight value.
   std::map<int, double>::const_iterator itDistance;
   for (itDistance = distances.begin();
         itDistance != distances.end();
-        itDistance++, ii++) {
-    vertexIds[ii] = itDistance->first;
+        itDistance++) {
+    if (itDistance->second > radius) {
+      radius = itDistance->second;
+    }
+  }
+  // Use a gaussian function to calculate the sample weights.
+  // sigmaSquared corresponds to the width of the bell curve.
+  double sigmaSquared = (radius * radius) * 0.75;
+  std::vector<std::pair<int, double> > samples;
+  for (itDistance = distances.begin();
+        itDistance != distances.end();
+        itDistance++) {
     double x = itDistance->second;
-    weights[ii] = exp(-(x*x)/(sigmaSquared));
+    //double w = exp(-(x*x)/(sigmaSquared));
+    double w = 1.0 - (x/radius);
+    samples.push_back(std::pair<int, double>(itDistance->first, w));
+  }
+
+  unsigned int length = (unsigned int)distances.size();
+  weights.setLength(length);
+  vertexIds.setLength(length);
+  std::sort(samples.begin(), samples.end(), SampleSort);
+  std::vector<std::pair<int, double> >::iterator iter;
+  int ii = 0;
+  double sum = 0.0;
+  for (iter = samples.begin(); iter != samples.end(); ++iter, ++ii) {
+    vertexIds[ii] = (*iter).first;
+    weights[ii] = (*iter).second;
+    sum += weights[ii];
+  }
+  // Normalize the weights
+  if (sum > 0.0) {
+    for (unsigned int i = 0; i < weights.length(); ++i) {
+      weights[i] /= sum;
+    }
   }
 }
 
@@ -281,4 +273,42 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
   matrix[1][0] = y.x; matrix[1][1] = y.y; matrix[1][2] = y.z; matrix[1][3] = 0.0;
   matrix[2][0] = z.x; matrix[2][1] = z.y; matrix[2][2] = z.z; matrix[2][3] = 0.0;
   matrix[3][0] = t.x; matrix[3][1] = t.y; matrix[3][2] = t.z; matrix[3][3] = 1.0;
+}
+
+
+void CalculateBasisComponents(const MDoubleArray& weights, const MPointArray& points,
+                              const MFloatVectorArray& normals, const MIntArray& sampleIds,
+                              MPoint& origin, MVector& up, MVector& normal) {
+  for (unsigned int j = 0; j < weights.length(); j++) {
+    normal += MVector(normals[sampleIds[j]]) * weights[j];
+    origin += MVector(points[sampleIds[j]]) * weights[j];
+  }
+  for (unsigned int j = 0; j < weights.length(); j++) {
+    up += (points[sampleIds[j]] - origin) * weights[j];
+  }
+  normal.normalize();
+
+  GetValidUpAndNormal(weights, points, sampleIds, origin, up, normal);
+}
+
+
+void GetValidUpAndNormal(const MDoubleArray& weights, const MPointArray& points,
+                         const MIntArray& sampleIds, const MPoint& origin, MVector& up,
+                         MVector& normal) {
+  MVector unitUp = up.normal();
+  // Adjust up if it's parallel to normal or if it's zero length
+  if (unitUp * normal == 1.0 || up.length() < 0.0001) {
+    for (unsigned int j = 0; j < weights.length(); ++j) {
+      if (unitUp * normal != 1.0 && up.length() > 0.0001) {
+        // If the up and normal vectors are no longer parallel and the up vector has a length,
+        // then we are good to go.
+        break;
+      }
+      up -= (points[sampleIds[j]] - origin) * weights[j];
+      unitUp = up.normal();
+    }
+    up.normalize();
+  } else {
+    up = unitUp;
+  }
 }

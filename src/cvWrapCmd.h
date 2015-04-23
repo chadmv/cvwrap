@@ -6,10 +6,15 @@
 #include <maya/MDagPathArray.h>
 #include <maya/MDGModifier.h>
 #include <maya/MFloatArray.h>
+#include <maya/MFloatVectorArray.h>
+#include <maya/MMatrixArray.h>
+#include <maya/MMeshIntersector.h>
 #include <maya/MPlug.h>
+#include <maya/MPointArray.h>
 #include <maya/MSelectionList.h>
 #include <maya/MString.h>
 #include <maya/MStringArray.h>
+#include <maya/MThreadPool.h>
 
 #include <maya/MPxCommand.h>
 
@@ -20,6 +25,25 @@
 #include <vector>
 #include <map>
 #include <set>
+
+struct BindData {
+  MPointArray inputPoints;  /**< The world space points of the geometry to be wrapped. */
+  MPointArray driverPoints;  /**< The world space points of the driver geometry. */
+  MFloatVectorArray driverNormals;  /**< The world space normals of the driver geometry. */
+  std::vector<MIntArray> perFaceVertices;  /**< The per-face vertex ids of the driver. */
+  MMeshIntersector intersector;  /**< Closest point intersector on the driver mesh. */
+  std::vector<std::set<int> > adjacency;  /**< Driver adjacency for surface crawling. */
+  MMatrix driverMatrix;  /**< Driver matrix to convert closest points into world space. */
+  double radius;  /**< Max crawl sample radius. */
+
+  /**
+    Elements calculated in the threads.
+  */
+  std::vector<MIntArray> sampleIds;
+  std::vector<MDoubleArray> weights;
+  MMatrixArray bindMatrices;
+
+};
 
 /**
   The cvWrap command is used to create new cvWrap deformers and to import and export
@@ -35,6 +59,14 @@ class CVWrapCmd : public MPxCommand {
   virtual bool isUndoable() const;
   static void* creator();    
   static MSyntax newSyntax();
+
+  /**
+    Distributes the ThreadData objects to the parallel threads.
+    @param[in] data The user defined data.  In this case, the ThreadData array.
+    @param[in] pRoot Maya's root task.
+  */
+  static void CreateTasks(void *data, MThreadRootTask *pRoot);
+  static MThreadRetVal CalculateBindingTask(void *pParam);
 
   const static char* kName;  /**< The name of the command. */
   
@@ -77,12 +109,6 @@ class CVWrapCmd : public MPxCommand {
   */
   const static char* kBindingFlagShort;  
   const static char* kBindingFlagLong;
-
-  /**
-    The UV set to use in the binding process.
-  */
-  const static char* kUVSetFlagShort;  
-  const static char* kUVSetFlagLong;
 
   /**
     Displays help.
@@ -143,7 +169,6 @@ class CVWrapCmd : public MPxCommand {
   MStatus readAttribute( std::ifstream &out, MMatrix &attribute );
 
   MString name_;  /**< Name of cvWrap node to create. */
-  MString uvset_;  /**< The UV set to use in the binding process. */
   double radius_;  /**< Binding sample radius. */
   CommandMode command_;
   MString filePath_;

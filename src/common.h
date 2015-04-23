@@ -7,6 +7,7 @@
 
 #include <maya/MDagPath.h>
 #include <maya/MDoubleArray.h>
+#include <maya/MFloatVectorArray.h>
 #include <maya/MIntArray.h>
 #include <maya/MMatrix.h>
 #include <maya/MPoint.h>
@@ -74,27 +75,6 @@ MStatus GetDagPath(MString& name, MDagPath& path);
  */
 MStatus DeleteIntermediateObjects(MDagPath& path);
 
-double DistanceSquared(const MPoint& p1, const MPoint& p2);
-
-/**
-  Helper struct to hold the 3 barycentric coordinates.
-*/
-struct BaryCoords {
-  float coords[3];
-  float operator[](int index) const { return coords[index]; }
-  float& operator[](int index) { return coords[index]; }
-};
-
-/**
-  Get the barycentric coordinates of point P in the triangle specified by points A,B,C.
-  @param[in] P The sample point.
-  @param[in] A Triangle point.
-  @param[in] B Triangle point.
-  @param[in] C Triangle point.
-  @param[out] coords Barycentric coordinates storage.
-*/
-void GetBarycentricCoordinates(const MPoint& P, const MPoint& A, const MPoint& B, const MPoint& C,
-                               BaryCoords& coords);
 
 /**
   Get the vertex adjacency of the specified mesh.  The vertex adjacency are the vertex ids
@@ -127,8 +107,8 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
   @param[out] vertexIds Storage for the vertex ids sampled during the crawl.
   @param[out] weights Storage for the calculated weights of each sampled vertex.
 */
- void CalculateSampleWeights(const std::map<int, double>& distances, double radius,
-                             MIntArray& vertexIds, MDoubleArray& weights);
+void CalculateSampleWeights(const std::map<int, double>& distances, double radius,
+                            MIntArray& vertexIds, MDoubleArray& weights);
 
  /**
    Creates an orthonormal basis using the given point and two axes.
@@ -137,7 +117,71 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
    @param[in] up Up vector.
    @param[out] matrix Generated matrix.
  */
- void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up,
-                   MMatrix& matrix);
+void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up,
+                  MMatrix& matrix);
+
+/**
+  Calculates the components necessary to create a wrap basis matrix.
+  @param[in] weights The sample weights array from the wrap binding.
+  @param[in] points The driver point array.
+  @param[in] normals The driver per-vertex normal array.
+  @param[in] sampleIds The vertex ids on the driver of the current sample.
+  @param[out] origin The origin of the coordinate system.
+  @param[out] up The up vector of the coordinate system.
+  @param[out] normal The normal vector of the coordinate system.
+*/
+void CalculateBasisComponents(const MDoubleArray& weights, const MPointArray& points,
+                              const MFloatVectorArray& normals, const MIntArray& sampleIds,
+                              MPoint& origin, MVector& up, MVector& normal);
+
+/**
+  Ensures that the up and normal vectors are perpendicular to each other.
+  @param[in] weights The sample weights array from the wrap binding.
+  @param[in] points The driver point array.
+  @param[in] sampleIds The vertex ids on the driver of the current sample.
+  @param[in] origin The origin of the coordinate system.
+  @param[out] up The up vector of the coordinate system.
+  @param[out] normal The normal vector of the coordinate system.
+*/
+void GetValidUpAndNormal(const MDoubleArray& weights, const MPointArray& points,
+                         const MIntArray& sampleIds, const MPoint& origin, MVector& up,
+                         MVector& normal);
+
+
+template <typename T>
+struct ThreadData {
+  unsigned int start;
+  unsigned int end;
+  unsigned int numTasks;
+  T* pData;
+};
+
+
+/**
+  Creates the data stuctures that will be sent to each thread.  Divides the vertices into
+  discrete chunks to be evaluated in the threads.
+  @param[in] taskCount The number of individual tasks we want to divide the calculation into.
+  @param[in] geomIndex The index of the input geometry we are evaluating.
+*/
+template <typename T>
+void CreateThreadData(int taskCount, unsigned int elementCount, T* taskData, ThreadData<T>* threadData) {
+  unsigned int taskLength = (elementCount + taskCount - 1) / taskCount;
+  unsigned int start = 0;
+  unsigned int end = taskLength;
+  int lastTask = taskCount - 1;
+  for(int i = 0; i < taskCount; i++) {
+    if (i == lastTask) {
+      end = elementCount;
+    }
+    threadData[i].start = start;
+    threadData[i].end = end;
+    threadData[i].numTasks = taskCount;
+    threadData[i].pData = taskData;
+
+    start += taskLength;
+    end += taskLength;
+  }
+}
+
 
 #endif

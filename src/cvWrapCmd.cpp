@@ -25,8 +25,6 @@ const char* CVWrapCmd::kImportFlagShort = "-im";
 const char* CVWrapCmd::kImportFlagLong = "-import";
 const char* CVWrapCmd::kBindingFlagShort = "-b";
 const char* CVWrapCmd::kBindingFlagLong = "-binding";
-const char* CVWrapCmd::kUVSetFlagShort = "-uv";
-const char* CVWrapCmd::kUVSetFlagLong = "-uvSet";
 const char* CVWrapCmd::kHelpFlagShort = "-h";
 const char* CVWrapCmd::kHelpFlagLong = "-help";
 
@@ -43,7 +41,6 @@ void DisplayHelp() {
   help += "-export (-ex):       String     Path to a file to export the binding to.\n"; 
   help += "-import (-im):       String     Path to a file to import the binding from.\n"; 
   help += "-binding (-b):       String     Path to a file to import the binding from on creation.\n"; 
-  help += "-uvSet (-uv):        String     The UV set to use in the bind process.\n"; 
   help += "-help (-h)           N/A        Display this text.\n";
   MGlobal::displayInfo(help);
 }
@@ -149,10 +146,6 @@ MStatus CVWrapCmd::GatherCommandArguments(const MArgList& args) {
   if (argData.isFlagSet(kBindingFlagShort)) {
     useBinding_ = true;
     filePath_ = argData.flagArgumentString(kBindingFlagShort, 0, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-  }
-  if (argData.isFlagSet(kUVSetFlagShort)) {
-    uvset_ = argData.flagArgumentString(kUVSetFlagShort, 0, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
   }
   argData.getObjects(selectionList_);
@@ -317,64 +310,25 @@ MStatus CVWrapCmd::GetLatestWrapNode() {
 
 MStatus CVWrapCmd::CalculateBinding() {
   MStatus status;
-  MMeshIntersector intersector;
+  BindData bindData;
+  bindData.radius = radius_;
   MObject oDriver = pathDriver_.node();
-  MMatrix driverMatrix = pathDriver_.inclusiveMatrix();
-  status = intersector.create(oDriver, driverMatrix);
+  bindData.driverMatrix = pathDriver_.inclusiveMatrix();
+  status = bindData.intersector.create(oDriver, bindData.driverMatrix);
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
   MFnMesh fnDriverMesh(pathDriver_, &status);
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
-  bool uvSetExists = false;
-  if (uvset_.length()) {
-    // Make sure uv set exists
-    MStringArray uvSets;
-    status = fnDriverMesh.getUVSetNames(uvSets);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    for (unsigned int i = 0; i < uvSets.length(); ++i) {
-      if (uvset_ == uvSets[i]) {
-        uvSetExists = true;
-        break;
-      }
-    }
-    if (!uvSetExists) {
-      // Fall back to the current UV set
-      MString message = "UV set " + uvset_ + " does not exist on " + fnDriverMesh.name() +
-                        ", defaulting to current uv set.";
-      MGlobal::displayWarning(message);
-    }
-  }
-  if (uvset_.length() == 0 || !uvSetExists) {
-    // If no UV set was specified use the current UV set.
-    status = fnDriverMesh.getCurrentUVSetName(uvset_);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-  }
-
-  // Store the UV set
-  MPlug plugUVSet(oWrapNode_, CVWrap::aUVSet);
-  status = plugUVSet.setString(uvset_);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
-
   // We need the adjacency of each vertex in order to crawl the mesh.
-  std::vector<std::set<int> > adjacency;
-  status = GetAdjacency(pathDriver_, adjacency);
+  status = GetAdjacency(pathDriver_, bindData.adjacency);
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
-  MPointArray points;
-  MFloatVectorArray normals, tangents;
-  fnDriverMesh.getPoints(points, MSpace::kWorld);
-  fnDriverMesh.getVertexNormals(false, normals, MSpace::kWorld);
-  fnDriverMesh.getTangents(tangents, MSpace::kWorld, &uvset_);
-
-  MFnSingleIndexedComponent fnComp;
-  MFnComponentListData fnCompData;
-  
-  
+  fnDriverMesh.getPoints(bindData.driverPoints, MSpace::kWorld);
+  fnDriverMesh.getVertexNormals(false, bindData.driverNormals, MSpace::kWorld);
 
   MPlug plugBindData(oWrapNode_, CVWrap::aBindData);
   
-  MFnNumericData fnNumericData;
   MFnMatrixData fnMatrixData;
   for (unsigned int geomIndex = 0; geomIndex < pathDriven_.length(); ++geomIndex) {
     // Get the plugs to the binding attributes for this geometry
@@ -386,144 +340,132 @@ MStatus CVWrapCmd::CalculateBinding() {
     CHECK_MSTATUS_AND_RETURN_IT(status);
     MPlug plugSampleBindMatrix = plugBind.child(CVWrap::aBindMatrix, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    MPlug plugTriangleVerts = plugBind.child(CVWrap::aTriangleVerts, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    MPlug plugTangentIndices = plugBind.child(CVWrap::aTangentIndices, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    MPlug plugBarycentricWeights = plugBind.child(CVWrap::aBarycentricWeights, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
     MItGeometry itGeo(pathDriven_[geomIndex], &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    // Start progress bar
-    StartProgress("Binding wrap...", itGeo.count());
-    int ii;
-    for (ii = 0; !itGeo.isDone(); itGeo.next(), ++ii) {
-      // We need to calculate a bind matrix for each component.
-      // The closest point will be the origin of the coordinate system.
-      // The weighted normal of the vertices in the sample radius will be one axis.
-      // The tangent at the closest point will be another axis.
 
-      // Get the closest point and faceId.  The close
-      MPoint inputPoint = itGeo.position(MSpace::kWorld, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      MPointOnMesh pointOnMesh;
-      status = intersector.getClosestPoint(inputPoint, pointOnMesh);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      int faceId = pointOnMesh.faceIndex();
-      int triangleId = pointOnMesh.triangleIndex();
-      // Put point in world space so we can calculate the proper bind matrix.
-      MPoint closestPoint = MPoint(pointOnMesh.getPoint()) * driverMatrix;
-
-      // Get vertices of closest face so we can crawl out from them.
-      MIntArray vertexList;
-      status = fnDriverMesh.getPolygonVertices(faceId, vertexList);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Crawl the surface to find all the vertices within the sample radius.
-      std::map<int, double> distances;
-      CrawlSurface(closestPoint, vertexList, points, radius_, adjacency, distances);
-
-      // Calculate the weight values per sampled vertex
-      MIntArray sampleIds;
-      MDoubleArray weights;
-      CalculateSampleWeights(distances, radius_, sampleIds, weights);
-
-      assert(weights.length() == (unsigned int)distances.size());
-      assert(weights.length() == sampleIds.length());
-
-      // Get barycentric coordinates of closestPoint
-      int triangleVertices[3];
-      status = fnDriverMesh.getPolygonTriangleVertices(faceId, triangleId, triangleVertices);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      BaryCoords coords;
-      GetBarycentricCoordinates(closestPoint, points[triangleVertices[0]],
-                                points[triangleVertices[1]], points[triangleVertices[2]],
-                                coords);
-
-      // Calculate the up vector from the tangents
-      int tangentIndices[3];
-      MVector up;
-      for (int j = 0; j < 3; ++j) {
-        tangentIndices[j] = fnDriverMesh.getTangentId(faceId, triangleVertices[j]);
-        up += tangents[tangentIndices[j]] * coords[j];
+    // Pre-gather data from Maya so we can multithread the binding process
+    status = itGeo.allPositions(bindData.inputPoints, MSpace::kWorld);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    bindData.perFaceVertices.resize(fnDriverMesh.numPolygons());
+    MIntArray vertexCount, vertexList;
+    status = fnDriverMesh.getVertices(vertexCount, vertexList);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    for (unsigned int faceId = 0, iter = 0; faceId < vertexCount.length(); ++faceId) {
+      bindData.perFaceVertices[faceId].clear();
+      for (int i = 0; i < vertexCount[faceId]; ++i, ++iter) {
+        bindData.perFaceVertices[faceId].append(vertexList[iter]);
       }
-      up.normalize();
+    }
+    bindData.sampleIds.resize(itGeo.count());
+    bindData.weights.resize(itGeo.count());
+    bindData.bindMatrices.setLength(itGeo.count());
 
-      // Calculate the weighted normal of the coordinate system
-      MVector normal;
-      for (unsigned int j = 0; j < weights.length(); j++) {
-        normal += MVector(normals[sampleIds[j]]) * weights[j];
-      }
-      normal.normalize();
+    // Send off the threads to calculate the binding.
+    ThreadData<BindData> threadData[32];
+    CreateThreadData<BindData>(32, itGeo.count(), &bindData, threadData);
+    MThreadPool::init();
+    MThreadPool::newParallelRegion(CreateTasks, (void *)threadData);
+    MThreadPool::release();
 
+    for (int ii = 0; !itGeo.isDone(); itGeo.next(), ++ii) {
       // Store all the binding data for this component
       // Note for nurbs surfaces the indices may not be continuous.
       int logicalIndex = itGeo.index();
 
       // Store sample vert ids.
-      MObject oComp = fnComp.create(MFn::kMeshVertComponent, &status);
+      MFnIntArrayData fnIntData;
+      MObject oIntData = fnIntData.create(bindData.sampleIds[ii], &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
-      status = fnComp.addElements(sampleIds);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      MObject oCompData = fnCompData.create();
-      fnCompData.add(oComp);
-      plugSampleVerts.elementByLogicalIndex(logicalIndex, &status).setMObject(oCompData);
+      plugSampleVerts.elementByLogicalIndex(logicalIndex, &status).setMObject(oIntData);
       CHECK_MSTATUS_AND_RETURN_IT(status);
 
       // Store sample weights
       MFnDoubleArrayData fnDoubleData;
-      MObject oDoubleData = fnDoubleData.create(weights, &status);
+      MObject oDoubleData = fnDoubleData.create(bindData.weights[ii], &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
       plugSampleWeights.elementByLogicalIndex(logicalIndex, &status).setMObject(oDoubleData);
       CHECK_MSTATUS_AND_RETURN_IT(status);
 
       // Store bind matrix
-      MMatrix matrix;
-      CreateMatrix(closestPoint, normal, up, matrix);
-      matrix = matrix.inverse();
-      MObject oMatrixData = fnMatrixData.create(matrix, &status);
+      MObject oMatrixData = fnMatrixData.create(bindData.bindMatrices[ii], &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
       plugSampleBindMatrix.elementByLogicalIndex(logicalIndex, &status).setMObject(oMatrixData);
       CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Store triangle vertices
-      MObject oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      status = fnNumericData.setData3Int(triangleVertices[0], triangleVertices[1], triangleVertices[2]);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      plugTriangleVerts.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Store tangent indices
-      oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      status = fnNumericData.setData3Int(tangentIndices[0], tangentIndices[1], tangentIndices[2]);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      plugTangentIndices.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Store barycentric coordinates
-      oNumericData = fnNumericData.create(MFnNumericData::k3Float, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      status = fnNumericData.setData3Float(coords[0], coords[1], coords[2]);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      plugBarycentricWeights.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      // Increment the progress bar on every 250 verts because updating the UI is slow.
-      if (ii % PROGRESS_STEP == 0 && ii != 0) {
-        StepProgress(PROGRESS_STEP);
-        // BUG with progress cancelation when using a marking menu.  Uncomment when it is fixed
-        /*if (ProgressCancelled()) {
-          EndProgress();
-          break;
-        }*/
-      }
     }
-
-    EndProgress();
   }
   return MS::kSuccess;
+}
+
+
+void CVWrapCmd::CreateTasks(void *data, MThreadRootTask *pRoot) {
+  ThreadData<BindData>* threadData = static_cast<ThreadData<BindData>*>(data);
+
+  if (threadData) {
+    int numTasks = threadData[0].numTasks;
+    for(int i = 0; i < numTasks; i++) {
+      MThreadPool::createTask(CalculateBindingTask, (void *)&threadData[i], pRoot);
+    }
+    MThreadPool::executeAndJoin(pRoot);
+  }
+}
+
+
+MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
+  ThreadData<BindData>* pThreadData = static_cast<ThreadData<BindData>*>(pParam);
+  BindData* pData = pThreadData->pData;
+  MMeshIntersector& intersector = pData->intersector;
+  MPointArray& inputPoints = pData->inputPoints;
+  MPointArray& driverPoints = pData->driverPoints;
+  MFloatVectorArray& driverNormals = pData->driverNormals;
+  std::vector<std::set<int> >& adjacency = pData->adjacency;
+  std::vector<MIntArray>& sampleIds = pData->sampleIds;;
+  std::vector<MDoubleArray>& weights = pData->weights;
+  MMatrixArray& bindMatrices = pData->bindMatrices;
+
+  double radius = pData->radius;
+
+  MMatrix& driverMatrix = pData->driverMatrix;
+  std::vector<MIntArray>& perFaceVertices = pData->perFaceVertices;
+
+  unsigned int taskStart = pThreadData->start;
+  unsigned int taskEnd = pThreadData->end;
+
+  for (unsigned int i = taskStart; i < taskEnd; ++i) {
+    if (i >= inputPoints.length()) {
+      break;
+    }
+    // We need to calculate a bind matrix for each component.
+    // The closest point will be the origin of the coordinate system.
+    // The weighted normal of the vertices in the sample radius will be one axis.
+    // The weight vector from the closest point to the sample vertices will be the other axis.
+
+    // Get the closest point and faceId.  The close
+    MPointOnMesh pointOnMesh;
+    intersector.getClosestPoint(inputPoints[i], pointOnMesh);
+    int faceId = pointOnMesh.faceIndex();
+    // Put point in world space so we can calculate the proper bind matrix.
+    MPoint closestPoint = MPoint(pointOnMesh.getPoint()) * driverMatrix;
+
+    // Get vertices of closest face so we can crawl out from them.
+    MIntArray& vertexList = perFaceVertices[faceId];
+
+    // Crawl the surface to find all the vertices within the sample radius.
+    std::map<int, double> distances;
+    CrawlSurface(closestPoint, vertexList, driverPoints, radius, adjacency, distances);
+
+    // Calculate the weight values per sampled vertex
+    CalculateSampleWeights(distances, radius, sampleIds[i], weights[i]);
+
+    // Get the components that form the orthonormal basis.
+    MPoint origin;
+    MVector up;
+    MVector normal;
+    CalculateBasisComponents(weights[i], driverPoints, driverNormals, sampleIds[i], origin, up, normal);
+
+    CreateMatrix(origin, normal, up, bindMatrices[i]);
+    bindMatrices[i] = bindMatrices[i].inverse();
+  }
+  return 0;
 }
 
 
@@ -619,8 +561,6 @@ MStatus CVWrapCmd::ExportBinding()
     MPlug plugSampleWeights(oWrapNode_, CVWrap::aSampleWeights);
     MPlug plugSampleVerts(oWrapNode_, CVWrap::aSampleComponents);
     MPlug plugSampleBindMatrix(oWrapNode_, CVWrap::aBindMatrix);
-    MPlug plugTriangleVerts(oWrapNode_, CVWrap::aTriangleVerts);
-    MPlug plugBarycentricWeights(oWrapNode_, CVWrap::aBarycentricWeights);
 
     float version = 1.0f;
     out.write((char *)&version, sizeof(float));
@@ -667,22 +607,6 @@ MStatus CVWrapCmd::ExportBinding()
         status = fnMatrixData.setObject(oTemp);
         CHECK_MSTATUS_AND_RETURN_IT(status);
         writeAttribute(out, fnMatrixData.matrix());
-
-        // Export triangle vertices
-        oTemp = plugTriangleVerts.elementByPhysicalIndex(i, &status).asMObject();
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        status = fnNumericData.setObject(oTemp);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        fnNumericData.getData3Int(triangleVerts[0], triangleVerts[1], triangleVerts[2]);
-        writeAttribute(out, triangleVerts);
-
-        // Export barycentric coordinates
-        oTemp = plugBarycentricWeights.elementByPhysicalIndex(i, &status).asMObject();
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        status = fnNumericData.setObject(oTemp);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        fnNumericData.getData3Float(tempCoords[0], tempCoords[1], tempCoords[2]);
-        writeAttribute(out, tempCoords);
 
         // Increment the progress bar
         if (i % 250 == 0 && i != 0) {
@@ -790,8 +714,6 @@ MStatus CVWrapCmd::ImportBinding()
     MPlug plugSampleWeights(oWrapNode_, CVWrap::aSampleWeights);
     MPlug plugSampleVerts(oWrapNode_, CVWrap::aSampleComponents);
     MPlug plugSampleBindMatrix(oWrapNode_, CVWrap::aBindMatrix);
-    MPlug plugTriangleVerts(oWrapNode_, CVWrap::aTriangleVerts);
-    MPlug plugBarycentricWeights(oWrapNode_, CVWrap::aBarycentricWeights);
 
     float version;
     in.read((char *)(&version), sizeof(float));
@@ -837,22 +759,6 @@ MStatus CVWrapCmd::ImportBinding()
         plugSampleBindMatrix.elementByLogicalIndex(i, &status).setMObject(oData);
         CHECK_MSTATUS_AND_RETURN_IT(status);
 
-        // Import triangle vertices
-        readAttribute(in, triangleVerts);
-        oData = fnNumericData.create(MFnNumericData::k3Int, &status);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        status = fnNumericData.setData3Int(triangleVerts[0], triangleVerts[1], triangleVerts[2]);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        plugTriangleVerts.elementByLogicalIndex(i, &status).setMObject(oData);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-
-        // Import barycentric coordinates
-        readAttribute(in, tempCoords);
-        oData = fnNumericData.create(MFnNumericData::k3Float, &status);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        fnNumericData.setData3Float(tempCoords[0], tempCoords[1], tempCoords[2]);
-        plugBarycentricWeights.elementByLogicalIndex(i, &status).setMObject(oData);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
         // Increment the progress bar
         if (i % 250 == 0 && i != 0) {
           StepProgress(250);
