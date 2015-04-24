@@ -77,6 +77,28 @@ MStatus DeleteIntermediateObjects(MDagPath& path);
 
 
 /**
+  Helper struct to hold the 3 barycentric coordinates.
+*/
+struct BaryCoords {
+  float coords[3];
+  float operator[](int index) const { return coords[index]; }
+  float& operator[](int index) { return coords[index]; }
+};
+
+
+/**
+  Get the barycentric coordinates of point P in the triangle specified by points A,B,C.
+  @param[in] P The sample point.
+  @param[in] A Triangle point.
+  @param[in] B Triangle point.
+  @param[in] C Triangle point.
+  @param[out] coords Barycentric coordinates storage.
+*/
+void GetBarycentricCoordinates(const MPoint& P, const MPoint& A, const MPoint& B, const MPoint& C,
+                               BaryCoords& coords);
+
+
+/**
   Get the vertex adjacency of the specified mesh.  The vertex adjacency are the vertex ids
   of the connected faces of each vertex.
   @param[in] pathMesh Path to a mesh.
@@ -123,6 +145,8 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
 /**
   Calculates the components necessary to create a wrap basis matrix.
   @param[in] weights The sample weights array from the wrap binding.
+  @param[in] coords The barycentric coordinates of the closest point.
+  @param[in] triangleVertices The vertex ids forming the triangle of the closest point.
   @param[in] points The driver point array.
   @param[in] normals The driver per-vertex normal array.
   @param[in] sampleIds The vertex ids on the driver of the current sample.
@@ -130,7 +154,8 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
   @param[out] up The up vector of the coordinate system.
   @param[out] normal The normal vector of the coordinate system.
 */
-void CalculateBasisComponents(const MDoubleArray& weights, const MPointArray& points,
+void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coords,
+                              const MIntArray& triangleVertices, const MPointArray& points,
                               const MFloatVectorArray& normals, const MIntArray& sampleIds,
                               MPoint& origin, MVector& up, MVector& normal);
 

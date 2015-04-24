@@ -17,6 +17,8 @@ MObject CVWrap::aRadius;
 MObject CVWrap::aBindInfo;
 MObject CVWrap::aSampleComponents;
 MObject CVWrap::aSampleWeights;
+MObject CVWrap::aTriangleVerts;
+MObject CVWrap::aBarycentricWeights;
 MObject CVWrap::aBindMatrix;
 MObject CVWrap::aNumTasks;
 MObject CVWrap::aScale;
@@ -49,6 +51,12 @@ MStatus CVWrap::initialize() {
   aSampleWeights = tAttr.create("sampleWeights", "sampleWeights", MFnData::kDoubleArray);
   tAttr.setArray(true);
 
+  aTriangleVerts = nAttr.create("triangleVerts", "triangleVerts", MFnNumericData::k3Int);
+  nAttr.setArray(true);
+
+  aBarycentricWeights = nAttr.create("barycentricWeights", "barycentricWeights", MFnNumericData::k3Float);
+  nAttr.setArray(true);
+
   aBindMatrix = mAttr.create("bindMatrix", "bindMatrix");
   mAttr.setDefault(MMatrix::identity);
   mAttr.setArray(true);
@@ -57,11 +65,16 @@ MStatus CVWrap::initialize() {
   cAttr.setArray(true);
   cAttr.addChild(aSampleComponents);
   cAttr.addChild(aSampleWeights);
+  cAttr.addChild(aTriangleVerts);
+  cAttr.addChild(aBarycentricWeights);
   cAttr.addChild(aBindMatrix);
   addAttribute(aBindData);
   attributeAffects(aSampleComponents, outputGeom);
   attributeAffects(aSampleWeights, outputGeom);
   attributeAffects(aBindMatrix, outputGeom);
+  attributeAffects(aTriangleVerts, outputGeom);
+  attributeAffects(aBarycentricWeights, outputGeom);
+
 
   aScale = nAttr.create("scale", "scale", MFnNumericData::kFloat, 1.0);
   nAttr.setKeyable(true);
@@ -209,9 +222,15 @@ MStatus CVWrap::GetBindInfo(MDataBlock& data, unsigned int geomIndex) {
   }
   MArrayDataHandle hComponents = hBindData.child(aSampleComponents);
   MArrayDataHandle hBindMatrix = hBindData.child(aBindMatrix);
+  MArrayDataHandle hTriangleVerts = hBindData.child(aTriangleVerts);
+  MArrayDataHandle hBarycentricWeights = hBindData.child(aBarycentricWeights);
+
   hSampleWeights.jumpToArrayElement(0);
   hComponents.jumpToArrayElement(0);
   hBindMatrix.jumpToArrayElement(0);
+  hTriangleVerts.jumpToArrayElement(0);
+  hBarycentricWeights.jumpToArrayElement(0);
+
   MFnSingleIndexedComponent fnSingleComp;
   MFnComponentListData fnCompData;
   MFnNumericData fnNumericData;
@@ -219,6 +238,9 @@ MStatus CVWrap::GetBindInfo(MDataBlock& data, unsigned int geomIndex) {
   taskData.bindMatrices.setLength(numVerts);
   taskData.sampleIds.resize(numVerts);
   taskData.sampleWeights.resize(numVerts);
+  taskData.triangleVerts.resize(numVerts);
+  taskData.baryCoords.resize(numVerts);
+
   int sampleLength = (int)taskData.bindMatrices.length();
   for (unsigned int i = 0; i < numVerts; ++i) {
     int logicalIndex = hComponents.elementIndex();
@@ -227,6 +249,8 @@ MStatus CVWrap::GetBindInfo(MDataBlock& data, unsigned int geomIndex) {
       taskData.bindMatrices.setLength(logicalIndex+1);
       taskData.sampleIds.resize(logicalIndex+1);
       taskData.sampleWeights.resize(logicalIndex+1);
+      taskData.triangleVerts.resize(logicalIndex+1);
+      taskData.baryCoords.resize(logicalIndex+1);
     }
 
     // Get sample ids
@@ -245,9 +269,29 @@ MStatus CVWrap::GetBindInfo(MDataBlock& data, unsigned int geomIndex) {
     // Get bind matrix
     taskData.bindMatrices[logicalIndex] = hBindMatrix.inputValue().asMatrix();
 
+    // Get triangle vertex binding
+    int3& verts = hTriangleVerts.inputValue(&status).asInt3();
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MIntArray& triangleVerts = taskData.triangleVerts[logicalIndex];
+    triangleVerts.setLength(3);
+    triangleVerts[0] = verts[0];
+    triangleVerts[1] = verts[1];
+    triangleVerts[2] = verts[2];
+
+    // Get barycentric weights
+    float3& baryWeights = hBarycentricWeights.inputValue(&status).asFloat3();
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    BaryCoords& coords = taskData.baryCoords[logicalIndex];
+    coords[0] = baryWeights[0];
+    coords[1] = baryWeights[1];
+    coords[2] = baryWeights[2];
+
+
     hSampleWeights.next();
     hComponents.next();
     hBindMatrix.next();
+    hTriangleVerts.next();
+    hBarycentricWeights.next();
   }
   return MS::kSuccess;
 }
@@ -283,11 +327,13 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
   MMatrixArray& bindMatrices = pData->bindMatrices;
   std::vector <MIntArray>& sampleIds = pData->sampleIds;
   std::vector <MDoubleArray>& sampleWeights = pData->sampleWeights;
+  std::vector <MIntArray>& triangleVerts = pData->triangleVerts;
+  std::vector <BaryCoords>& baryCoords = pData->baryCoords;
 
   unsigned int taskStart = pThreadData->start;
   unsigned int taskEnd = pThreadData->end;
 
-  MPoint newPt, pt;
+  MPoint newPt;
   MMatrix scaleMatrix;
   scaleMatrix[0][0] = scale;
   scaleMatrix[1][1] = scale;
@@ -300,7 +346,8 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
 
     MPoint origin;
     MVector normal, up;
-    CalculateBasisComponents(sampleWeights[index], driverPoints, driverNormals, sampleIds[index], origin, up, normal);
+    CalculateBasisComponents(sampleWeights[index], baryCoords[index], triangleVerts[i],
+                             driverPoints, driverNormals, sampleIds[index], origin, up, normal);
 
     MMatrix matrix;
     CreateMatrix(origin, normal, up, matrix);

@@ -26,11 +26,14 @@
 #include <map>
 #include <set>
 
+#include "common.h"
+
 struct BindData {
   MPointArray inputPoints;  /**< The world space points of the geometry to be wrapped. */
   MPointArray driverPoints;  /**< The world space points of the driver geometry. */
   MFloatVectorArray driverNormals;  /**< The world space normals of the driver geometry. */
   std::vector<MIntArray> perFaceVertices;  /**< The per-face vertex ids of the driver. */
+  std::vector<std::vector<MIntArray> > perFaceTriangleVertices;  /**< The per-face per-triangle vertex ids of the driver. */
   MMeshIntersector intersector;  /**< Closest point intersector on the driver mesh. */
   std::vector<std::set<int> > adjacency;  /**< Driver adjacency for surface crawling. */
   MMatrix driverMatrix;  /**< Driver matrix to convert closest points into world space. */
@@ -42,7 +45,8 @@ struct BindData {
   std::vector<MIntArray> sampleIds;
   std::vector<MDoubleArray> weights;
   MMatrixArray bindMatrices;
-
+  std::vector<BaryCoords> coords;
+  std::vector<MIntArray> triangleVertices;
 };
 
 /**

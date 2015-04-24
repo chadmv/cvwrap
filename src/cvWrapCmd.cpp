@@ -1,6 +1,5 @@
 #include "cvWrapCmd.h"
 #include "cvWrapDeformer.h"
-#include "common.h"
 
 #include <maya/MArgDatabase.h>
 #include <maya/MFnMatrixData.h>
@@ -340,6 +339,11 @@ MStatus CVWrapCmd::CalculateBinding() {
     CHECK_MSTATUS_AND_RETURN_IT(status);
     MPlug plugSampleBindMatrix = plugBind.child(CVWrap::aBindMatrix, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugTriangleVerts = plugBind.child(CVWrap::aTriangleVerts, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugBarycentricWeights = plugBind.child(CVWrap::aBarycentricWeights, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+
     MItGeometry itGeo(pathDriven_[geomIndex], &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
 
@@ -347,18 +351,30 @@ MStatus CVWrapCmd::CalculateBinding() {
     status = itGeo.allPositions(bindData.inputPoints, MSpace::kWorld);
     CHECK_MSTATUS_AND_RETURN_IT(status);
     bindData.perFaceVertices.resize(fnDriverMesh.numPolygons());
-    MIntArray vertexCount, vertexList;
+    bindData.perFaceTriangleVertices.resize(fnDriverMesh.numPolygons());
+    MIntArray vertexCount, vertexList, triangleCounts, triangleVertices;
     status = fnDriverMesh.getVertices(vertexCount, vertexList);
     CHECK_MSTATUS_AND_RETURN_IT(status);
-    for (unsigned int faceId = 0, iter = 0; faceId < vertexCount.length(); ++faceId) {
+    status = fnDriverMesh.getTriangles(triangleCounts, triangleVertices);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    for (unsigned int faceId = 0, iter = 0, triIter = 0; faceId < vertexCount.length(); ++faceId) {
       bindData.perFaceVertices[faceId].clear();
       for (int i = 0; i < vertexCount[faceId]; ++i, ++iter) {
         bindData.perFaceVertices[faceId].append(vertexList[iter]);
+      }
+      bindData.perFaceTriangleVertices[faceId].resize(triangleCounts[faceId]);
+      for (int triId = 0; triId < triangleCounts[faceId]; ++triId) {
+        bindData.perFaceTriangleVertices[faceId][triId].setLength(3);
+        bindData.perFaceTriangleVertices[faceId][triId][0] = triangleVertices[triIter++];
+        bindData.perFaceTriangleVertices[faceId][triId][1] = triangleVertices[triIter++];
+        bindData.perFaceTriangleVertices[faceId][triId][2] = triangleVertices[triIter++];
       }
     }
     bindData.sampleIds.resize(itGeo.count());
     bindData.weights.resize(itGeo.count());
     bindData.bindMatrices.setLength(itGeo.count());
+    bindData.coords.resize(itGeo.count());
+    bindData.triangleVertices.resize(itGeo.count());
 
     // Send off the threads to calculate the binding.
     ThreadData<BindData> threadData[32];
@@ -371,7 +387,6 @@ MStatus CVWrapCmd::CalculateBinding() {
       // Store all the binding data for this component
       // Note for nurbs surfaces the indices may not be continuous.
       int logicalIndex = itGeo.index();
-
       // Store sample vert ids.
       MFnIntArrayData fnIntData;
       MObject oIntData = fnIntData.create(bindData.sampleIds[ii], &status);
@@ -390,6 +405,25 @@ MStatus CVWrapCmd::CalculateBinding() {
       MObject oMatrixData = fnMatrixData.create(bindData.bindMatrices[ii], &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
       plugSampleBindMatrix.elementByLogicalIndex(logicalIndex, &status).setMObject(oMatrixData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Store triangle vertices
+      MFnNumericData fnNumericData;
+      MObject oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      status = fnNumericData.setData3Int(bindData.triangleVertices[ii][0],
+                                         bindData.triangleVertices[ii][1],
+                                         bindData.triangleVertices[ii][2]);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugTriangleVerts.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Store barycentric coordinates
+      oNumericData = fnNumericData.create(MFnNumericData::k3Float, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      status = fnNumericData.setData3Float(bindData.coords[ii][0], bindData.coords[ii][1], bindData.coords[ii][2]);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugBarycentricWeights.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
       CHECK_MSTATUS_AND_RETURN_IT(status);
     }
   }
@@ -418,14 +452,17 @@ MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
   MPointArray& driverPoints = pData->driverPoints;
   MFloatVectorArray& driverNormals = pData->driverNormals;
   std::vector<std::set<int> >& adjacency = pData->adjacency;
-  std::vector<MIntArray>& sampleIds = pData->sampleIds;;
+  std::vector<MIntArray>& sampleIds = pData->sampleIds;
   std::vector<MDoubleArray>& weights = pData->weights;
+  std::vector<BaryCoords>& coords = pData->coords;
+  std::vector<MIntArray>& triangleVertices = pData->triangleVertices;
   MMatrixArray& bindMatrices = pData->bindMatrices;
 
   double radius = pData->radius;
 
   MMatrix& driverMatrix = pData->driverMatrix;
   std::vector<MIntArray>& perFaceVertices = pData->perFaceVertices;
+  std::vector<std::vector<MIntArray> >& perFaceTriangleVertices  = pData->perFaceTriangleVertices;
 
   unsigned int taskStart = pThreadData->start;
   unsigned int taskEnd = pThreadData->end;
@@ -443,8 +480,17 @@ MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
     MPointOnMesh pointOnMesh;
     intersector.getClosestPoint(inputPoints[i], pointOnMesh);
     int faceId = pointOnMesh.faceIndex();
+    int triangleId = pointOnMesh.triangleIndex();
+
     // Put point in world space so we can calculate the proper bind matrix.
     MPoint closestPoint = MPoint(pointOnMesh.getPoint()) * driverMatrix;
+
+    // Get barycentric coordinates of closestPoint
+    triangleVertices[i] = perFaceTriangleVertices[faceId][triangleId];
+    GetBarycentricCoordinates(closestPoint, driverPoints[triangleVertices[i][0]],
+                              driverPoints[triangleVertices[i][1]],
+                              driverPoints[triangleVertices[i][2]],
+                              coords[i]);
 
     // Get vertices of closest face so we can crawl out from them.
     MIntArray& vertexList = perFaceVertices[faceId];
@@ -460,8 +506,8 @@ MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
     MPoint origin;
     MVector up;
     MVector normal;
-    CalculateBasisComponents(weights[i], driverPoints, driverNormals, sampleIds[i], origin, up, normal);
-
+    CalculateBasisComponents(weights[i], coords[i], triangleVertices[i], driverPoints,
+                             driverNormals, sampleIds[i], origin, up, normal);
     CreateMatrix(origin, normal, up, bindMatrices[i]);
     bindMatrices[i] = bindMatrices[i].inverse();
   }

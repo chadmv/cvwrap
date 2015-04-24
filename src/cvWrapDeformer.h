@@ -53,6 +53,8 @@ struct TaskData {
   MMatrixArray bindMatrices;
   std::vector<MIntArray> sampleIds;
   std::vector<MDoubleArray> sampleWeights;
+  std::vector<MIntArray> triangleVerts;
+  std::vector<BaryCoords> baryCoords;
 };
  
 
@@ -87,6 +89,11 @@ class CVWrap : public MPxDeformerNode {
   static MObject aBindInfo;
   static MObject aSampleComponents;
   static MObject aSampleWeights;
+    /** The vertex indices of the triangle containing the origin of each coordinate system. */
+  static MObject aTriangleVerts;
+  /** The indices of the tangents used to calculate the up vector. */
+  static MObject aBarycentricWeights;
+
   static MObject aBindMatrix;
   static MObject aNumTasks;
   static MObject aScale;

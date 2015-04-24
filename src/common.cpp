@@ -11,6 +11,8 @@
 #include <queue>
 #include <utility>
 
+#define NORMALIZATION_INDEX -1
+
 void StartProgress(const MString& title, unsigned int count) {
   if (MGlobal::mayaState() == MGlobal::kInteractive) {
     MString message = "progressBar -e -bp -ii true -st \"";
@@ -126,6 +128,36 @@ MStatus DeleteIntermediateObjects(MDagPath& path) {
 }
 
 
+void GetBarycentricCoordinates(const MPoint& P, const MPoint& A, const MPoint& B, const MPoint& C,
+                               BaryCoords& coords) {
+  // Compute the normal of the triangle
+  MVector N = (B - A) ^ (C - A);
+  MVector unitN = N.normal();
+
+  // Compute twice area of triangle ABC
+  double areaABC = unitN * N;
+
+  if (areaABC == 0.0) {
+    // If the triangle is degenerate, just use one of the points.
+    coords[0] = 1.0f;
+    coords[1] = 0.0f;
+    coords[2] = 0.0f;
+    return;
+  }
+
+  // Compute a
+  double areaPBC = unitN * ((B - P) ^ (C - P));
+  coords[0] = (float)(areaPBC / areaABC);
+
+  // Compute b
+  double areaPCA = unitN * ((C - P) ^ (A - P));
+  coords[1] = (float)(areaPCA / areaABC);
+
+  // Compute c
+  coords[2] = 1.0f - coords[0] - coords[1];
+}
+
+
 MStatus GetAdjacency(MDagPath& pathMesh, std::vector<std::set<int> >& adjacency) {
   MStatus status;
   // Get mesh adjacency.  The adjacency will be all vertex ids on the connected faces.
@@ -167,15 +199,34 @@ struct CrawlData {
 MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, MPointArray& points, double maxDistance,
                      std::vector<std::set<int> >& adjacency, std::map<int, double>& distances) {
   MStatus status;
+  distances[NORMALIZATION_INDEX] = 0.0; // -1 will represent our hit point.
+  double minStartDistance = 999999.0;
+  unsigned int minStartIndex = 0;
+
   // Instead of a recursive function, which can get pretty slow, we'll use a queue to keep
   // track of where we are going and where we are coming from.
   std::queue<CrawlData> verticesToVisit;
   // Add the initial crawl paths to the queue.
   for (unsigned int i = 0; i < vertexIndices.length(); ++i) {
-    CrawlData root = {startPoint, 0.0, vertexIndices[i]};
+    double distance = startPoint.distanceTo(points[vertexIndices[i]]);
+    // Only crawl to the starting vertices if they are within the radius.
+    if (distance <= maxDistance) {
+      CrawlData root = {startPoint, distance, vertexIndices[i]};
+      verticesToVisit.push(root);
+      distances[vertexIndices[i]] = distance;
+    }
+    // Track the minimum start distance in case we need to add the closest vertex below.
+    if (distance < minStartDistance) {
+      minStartDistance = distance;
+      minStartIndex = vertexIndices[i];
+    }
+  }
+  // If we didn't even reach a vertex in the hit face, add the closest vertex so we can calculate
+  // a proper up vector
+  if (verticesToVisit.size() == 0) {
+    CrawlData root = {startPoint, maxDistance - 0.001, minStartIndex};
     verticesToVisit.push(root);
-    // Store the initial distances so we hit all the starting vertices.
-    distances[vertexIndices[i]] = startPoint.distanceTo(points[vertexIndices[i]]);
+    distances[minStartIndex] = maxDistance - 0.001;
   }
   while (verticesToVisit.size()) {
     CrawlData next = verticesToVisit.front();
@@ -214,30 +265,19 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
 }
 
 bool SampleSort(std::pair<int, double> lhs, std::pair<int, double> rhs) {
-  return (lhs.second < rhs.second); 
+  // Ensure that the normalization sample comes last.
+  return (lhs.second < rhs.second) || rhs.first == NORMALIZATION_INDEX; 
 }
 
 void CalculateSampleWeights(const std::map<int, double>& distances, double radius,
                             MIntArray& vertexIds, MDoubleArray& weights) {
-  // If the radius was smaller than the distances to the vertices on the closest face,
-  // increase the radius so we get a positive weight value.
+  
   std::map<int, double>::const_iterator itDistance;
-  for (itDistance = distances.begin();
-        itDistance != distances.end();
-        itDistance++) {
-    if (itDistance->second > radius) {
-      radius = itDistance->second;
-    }
-  }
-  // Use a gaussian function to calculate the sample weights.
-  // sigmaSquared corresponds to the width of the bell curve.
-  double sigmaSquared = (radius * radius) * 0.75;
   std::vector<std::pair<int, double> > samples;
   for (itDistance = distances.begin();
         itDistance != distances.end();
         itDistance++) {
     double x = itDistance->second;
-    //double w = exp(-(x*x)/(sigmaSquared));
     double w = 1.0 - (x/radius);
     samples.push_back(std::pair<int, double>(itDistance->first, w));
   }
@@ -252,13 +292,12 @@ void CalculateSampleWeights(const std::map<int, double>& distances, double radiu
   for (iter = samples.begin(); iter != samples.end(); ++iter, ++ii) {
     vertexIds[ii] = (*iter).first;
     weights[ii] = (*iter).second;
-    sum += weights[ii];
+    sum += (*iter).second;
   }
+  assert(sum > 0.0);
   // Normalize the weights
-  if (sum > 0.0) {
-    for (unsigned int i = 0; i < weights.length(); ++i) {
-      weights[i] /= sum;
-    }
+  for (unsigned int i = 0; i < weights.length(); ++i) {
+    weights[i] /= sum;
   }
 }
 
@@ -276,16 +315,31 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
 }
 
 
-void CalculateBasisComponents(const MDoubleArray& weights, const MPointArray& points,
+void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coords,
+                              const MIntArray& triangleVertices, const MPointArray& points,
                               const MFloatVectorArray& normals, const MIntArray& sampleIds,
                               MPoint& origin, MVector& up, MVector& normal) {
-  for (unsigned int j = 0; j < weights.length(); j++) {
+  // Start with the recreated point and normal using the barycentric coordinates of the hit point.
+  MPoint hitPoint;
+  MVector hitNormal;
+  for (int i = 0; i < 3; ++i) {
+    hitPoint += points[triangleVertices[i]] * coords[i];
+    hitNormal += MVector(normals[triangleVertices[i]]) * coords[i];
+  }
+  // Then use the weighted adjacent data.
+  unsigned int hitIndex = weights.length()-1;
+  for (unsigned int j = 0; j < hitIndex; j++) {
     normal += MVector(normals[sampleIds[j]]) * weights[j];
     origin += MVector(points[sampleIds[j]]) * weights[j];
   }
-  for (unsigned int j = 0; j < weights.length(); j++) {
+  // Add the recreated barycentric point and normal.
+  normal += hitNormal * weights[hitIndex];
+  origin += hitPoint * weights[hitIndex];
+
+  for (unsigned int j = 0; j < hitIndex; j++) {
     up += (points[sampleIds[j]] - origin) * weights[j];
   }
+  up += (hitPoint - origin) * weights[hitIndex];
   normal.normalize();
 
   GetValidUpAndNormal(weights, points, sampleIds, origin, up, normal);
@@ -298,7 +352,7 @@ void GetValidUpAndNormal(const MDoubleArray& weights, const MPointArray& points,
   MVector unitUp = up.normal();
   // Adjust up if it's parallel to normal or if it's zero length
   if (unitUp * normal == 1.0 || up.length() < 0.0001) {
-    for (unsigned int j = 0; j < weights.length(); ++j) {
+    for (unsigned int j = 0; j < weights.length()-1; ++j) {
       if (unitUp * normal != 1.0 && up.length() > 0.0001) {
         // If the up and normal vectors are no longer parallel and the up vector has a length,
         // then we are good to go.
