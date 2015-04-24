@@ -10,9 +10,6 @@
 #include <set>
 #include <queue>
 #include <utility>
-#include <xmmintrin.h>
-#include <emmintrin.h>
-#include <immintrin.h>
 
 #define NORMALIZATION_INDEX -1
 #define MM256_SHUFFLE(fp3,fp2,fp1,fp0) (((fp3) << 3) | ((fp2) << 2) | \
@@ -265,6 +262,7 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
     }
   }
   assert(distances.size() > 0);
+  
   return MS::kSuccess;
 }
 
@@ -284,6 +282,12 @@ void CalculateSampleWeights(const std::map<int, double>& distances, double radiu
     double x = itDistance->second;
     double w = 1.0 - (x/radius);
     samples.push_back(std::pair<int, double>(itDistance->first, w));
+  }
+
+  // Make the samples a multiple of 4 so we can use fast intrinsics!
+  int remainder = (samples.size()-1) % 4;
+  for (int i = 0; i < remainder; ++i) {
+    samples.push_back(std::pair<int, double>(0, 0.0));
   }
 
   unsigned int length = (unsigned int)distances.size();
@@ -318,69 +322,69 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
   matrix[3][0] = t.x; matrix[3][1] = t.y; matrix[3][2] = t.z; matrix[3][3] = 1.0;
 }
 
-__m256d Dot(const __m256d v1, const __m256d v2) {
-  // dot = (w1*w2, z1*z2, y1*y2, x1*x2)
-  __m256d dot = _mm256_mul_pd(v1, v2);
-  // temp = (y1*y2, y1*y2, z1*z2, z1*z2)
-  __m256d temp = _mm256_shuffle_pd(dot, dot, MM256_SHUFFLE(0, 0, 1, 1));
-  // dot = (w1*w2, z1*z2, y1*y2, x1*x2+y1*y2)
-  dot = _mm256_add_pd(dot, temp);
-  // temp = (z1*z2, z1*z2, z1*z2, z1*z2)
-  temp = _mm256_shuffle_pd(temp, temp, MM256_SHUFFLE(1, 1, 1, 1));
-  // dot = (w1*w2, z1*z2, y1*y2, x1*x2+y1*y2+z1*z2)
-  dot = _mm256_add_pd(dot, temp);
-  __m256d result;
-  // values = (x1*x2+y1*y2+z1*z2, x1*x2+y1*y2+z1*z2, x1*x2+y1*y2+z1*z2, x1*x2+y1*y2+z1*z2)
-  result = _mm256_shuffle_pd(dot, dot, MM256_SHUFFLE(0, 0, 0, 0));
-  return result;
-}
-
-template <typename T>
-void CalculateBaryPointAVX(const MIntArray& triangleVertices, const BaryCoords& coords,
-                           const T& p1, const T& p2, const T& p3,
-                           double& x, double& y, double& z) {
-  __m256d xxx = _mm256_set_pd(p1.x, p2.x, p3.x, 0.0);
-  __m256d yyy = _mm256_set_pd(p1.y, p2.y, p3.y, 0.0);
-  __m256d zzz = _mm256_set_pd(p1.z, p2.z, p3.z, 0.0);
-  __m256d www = _mm256_set_pd(coords[0], coords[1], coords[2], 0.0);
-  __m256d xy0 = _mm256_mul_pd(xxx, www);
-  __m256d xy1 = _mm256_mul_pd(yyy, www);
-  __m256d xy2 = _mm256_mul_pd(zzz, www);
-  __m256d xy3 = _mm256_mul_pd(www, www); // Dummy
-  // low to high: xy00+xy01 xy10+xy11 xy02+xy03 xy12+xy13
-  __m256d temp01 = _mm256_hadd_pd(xy0, xy1);   
-  // low to high: xy20+xy21 xy30+xy31 xy22+xy23 xy32+xy33
-  __m256d temp23 = _mm256_hadd_pd(xy2, xy3);
-  // low to high: xy02+xy03 xy12+xy13 xy20+xy21 xy30+xy31
-  __m256d swapped = _mm256_permute2f128_pd(temp01, temp23, 0x21);
-  // low to high: xy00+xy01 xy10+xy11 xy22+xy23 xy32+xy33
-  __m256d blended = _mm256_blend_pd(temp01, temp23, 0x0C);
-  __m256d dotproduct = _mm256_add_pd(swapped, blended);
-  double values[4];
-  _mm256_store_pd(values, dotproduct);
-  x = values[0];
-  y = values[1];
-  z = values[2];
-}
 
 void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coords,
                               const MIntArray& triangleVertices, const MPointArray& points,
                               const MFloatVectorArray& normals, const MIntArray& sampleIds,
                               MPoint& origin, MVector& up, MVector& normal) {
   // Start with the recreated point and normal using the barycentric coordinates of the hit point.
+  
+  unsigned int hitIndex = weights.length()-1;
+  __m256d hitPointV = Dot4<MPoint>(coords[0], coords[1], coords[2], 0.0,
+                                points[triangleVertices[0]], points[triangleVertices[1]],
+                                points[triangleVertices[2]], MPoint::origin);
+  __m256d hitNormalV = Dot4<MVector>(coords[0], coords[1], coords[2], 0.0,
+                                normals[triangleVertices[0]], normals[triangleVertices[1]],
+                                normals[triangleVertices[2]], MVector::zero);
+  __m256d hitWeightV = _mm256_set1_pd(weights[hitIndex]);
+  __m256d originV = _mm256_mul_pd(hitPointV, hitWeightV);
+  __m256d normalV = _mm256_mul_pd(hitNormalV, hitWeightV);
+  for (unsigned int j = 0; j < hitIndex; j += 4) {
+    __m256d tempOrigin = Dot4<MPoint>(weights[j], weights[j+1], weights[j+2], weights[j+3],
+                                      points[sampleIds[j]], points[sampleIds[j+1]],
+                                      points[sampleIds[j+3]], points[sampleIds[j+3]]);
+    originV = _mm256_add_pd(tempOrigin, originV);
+
+    __m256d tempNormal = Dot4<MVector>(weights[j], weights[j+1], weights[j+2], weights[j+3],
+                                       normals[sampleIds[j]], normals[sampleIds[j+1]],
+                                       normals[sampleIds[j+3]], normals[sampleIds[j+3]]);
+    normalV = _mm256_add_pd(tempNormal, normalV);
+  }
+
+  // Calculate the up vector
+  __m256d upV = _mm256_mul_pd(_mm256_sub_pd(hitPointV, originV), hitWeightV);
+  MVector v1, v2, v3, v4;
+  for (unsigned int j = 0; j < hitIndex; j += 4) {
+    v1 = points[sampleIds[j]] - origin;
+    v2 = points[sampleIds[j+1]] - origin;
+    v3 = points[sampleIds[j+2]] - origin;
+    v4 = points[sampleIds[j+3]] - origin;
+    __m256d tempUp = Dot4<MVector>(weights[j], weights[j+1], weights[j+2], weights[j+3],
+                                   v1, v2, v3, v4);
+    upV = _mm256_add_pd(tempUp, upV);
+  }
+  
+  double values[4];
+  _mm256_store_pd(values, normalV);
+  normal.x = values[0];
+  normal.y = values[1];
+  normal.z = values[2];
+  _mm256_store_pd(values, originV);
+  origin.x = values[0];
+  origin.y = values[1];
+  origin.z = values[2];
+  _mm256_store_pd(values, upV);
+  up.x = values[0];
+  up.y = values[1];
+  up.z = values[2];
+  
+  
+  /*
   MPoint hitPoint;
   MVector hitNormal;
-  CalculateBaryPointAVX<MPoint>(triangleVertices, coords,
-                                points[triangleVertices[0]], points[triangleVertices[1]],
-                                points[triangleVertices[2]], hitPoint.x, hitPoint.y, hitPoint.z);
-  CalculateBaryPointAVX<MVector>(triangleVertices, coords,
-                                normals[triangleVertices[0]], normals[triangleVertices[1]],
-                                normals[triangleVertices[2]], hitNormal.x, hitNormal.y, hitNormal.z);
- 
-
   for (int i = 0; i < 3; ++i) {
-    //hitPoint += points[triangleVertices[i]] * coords[i];
-    //hitNormal += MVector(normals[triangleVertices[i]]) * coords[i];
+    hitPoint += points[triangleVertices[i]] * coords[i];
+    hitNormal += MVector(normals[triangleVertices[i]]) * coords[i];
   }
   // Then use the weighted adjacent data.
   unsigned int hitIndex = weights.length()-1;
@@ -391,11 +395,12 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   // Add the recreated barycentric point and normal.
   normal += hitNormal * weights[hitIndex];
   origin += hitPoint * weights[hitIndex];
-
+  
   for (unsigned int j = 0; j < hitIndex; j++) {
     up += (points[sampleIds[j]] - origin) * weights[j];
   }
   up += (hitPoint - origin) * weights[hitIndex];
+  */
   normal.normalize();
 
   GetValidUpAndNormal(weights, points, sampleIds, origin, up, normal);

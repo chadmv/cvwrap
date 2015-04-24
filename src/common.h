@@ -16,6 +16,10 @@
 #include <map>
 #include <vector>
 #include <set>
+#include <xmmintrin.h>
+#include <emmintrin.h>
+#include <immintrin.h>
+
 /**
   Helper function to start a new progress bar.
   @param[in] title Status title.
@@ -206,6 +210,34 @@ void CreateThreadData(int taskCount, unsigned int elementCount, T* taskData, Thr
     start += taskLength;
     end += taskLength;
   }
+}
+
+template <typename T>
+__m256d Dot4(double w1, double w2, double w3, double w4,
+             const T& p1, const T& p2, const T& p3, const T& p4) {
+  __m256d xxx = _mm256_set_pd(p1.x, p2.x, p3.x, p4.x);
+  __m256d yyy = _mm256_set_pd(p1.y, p2.y, p3.y, p4.y);
+  __m256d zzz = _mm256_set_pd(p1.z, p2.z, p3.z, p4.z);
+  __m256d www = _mm256_set_pd(w1, w2, w3, w4);
+  __m256d xy0 = _mm256_mul_pd(xxx, www);
+  __m256d xy1 = _mm256_mul_pd(yyy, www);
+  __m256d xy2 = _mm256_mul_pd(zzz, www);
+  __m256d xy3 = _mm256_mul_pd(www, www); // Dummy
+  // low to high: xy00+xy01 xy10+xy11 xy02+xy03 xy12+xy13
+  __m256d temp01 = _mm256_hadd_pd(xy0, xy1);   
+  // low to high: xy20+xy21 xy30+xy31 xy22+xy23 xy32+xy33
+  __m256d temp23 = _mm256_hadd_pd(xy2, xy3);
+  // low to high: xy02+xy03 xy12+xy13 xy20+xy21 xy30+xy31
+  __m256d swapped = _mm256_permute2f128_pd(temp01, temp23, 0x21);
+  // low to high: xy00+xy01 xy10+xy11 xy22+xy23 xy32+xy33
+  __m256d blended = _mm256_blend_pd(temp01, temp23, 0x0C);
+  __m256d dotproduct = _mm256_add_pd(swapped, blended);
+  return dotproduct;
+  /*double values[4];
+  _mm256_store_pd(values, dotproduct);
+  x = values[0];
+  y = values[1];
+  z = values[2];*/
 }
 
 
