@@ -9,7 +9,7 @@ set(SOURCE_FILES
     "common.cpp"
     "common.h"
 )
-
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX")
 find_package(Maya REQUIRED)
 
 include_directories(${MAYA_INCLUDE_DIR})
