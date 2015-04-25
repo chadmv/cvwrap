@@ -285,7 +285,7 @@ void CalculateSampleWeights(const std::map<int, double>& distances, double radiu
   }
 
   // Make the samples a multiple of 4 so we can use fast intrinsics!
-  int remainder = (samples.size()-1) % 4;
+  int remainder = 4 - ((samples.size()-1) % 4);
   for (int i = 0; i < remainder; ++i) {
     samples.push_back(std::pair<int, double>(0, 0.0));
   }
