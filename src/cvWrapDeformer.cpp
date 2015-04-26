@@ -265,7 +265,7 @@ MStatus CVWrap::GetBindInfo(MDataBlock& data, unsigned int geomIndex) {
     CHECK_MSTATUS_AND_RETURN_IT(status);
     taskData.sampleWeights[logicalIndex] = fnDoubleData.array();
     assert(taskData.sampleWeights[logicalIndex].length() == taskData.sampleIds[logicalIndex].length());
-
+    
     // Get bind matrix
     taskData.bindMatrices[logicalIndex] = hBindMatrix.inputValue().asMatrix();
 
@@ -285,7 +285,6 @@ MStatus CVWrap::GetBindInfo(MDataBlock& data, unsigned int geomIndex) {
     coords[0] = baryWeights[0];
     coords[1] = baryWeights[1];
     coords[2] = baryWeights[2];
-
 
     hSampleWeights.next();
     hComponents.next();
@@ -334,10 +333,11 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
   unsigned int taskEnd = pThreadData->end;
 
   MPoint newPt;
-  MMatrix scaleMatrix;
+  MMatrix scaleMatrix, matrix;
   scaleMatrix[0][0] = scale;
   scaleMatrix[1][1] = scale;
   scaleMatrix[2][2] = scale;
+  double* alignedStorage = (double*) _mm_malloc (4*sizeof(double),256);
   for (unsigned int i = taskStart; i < taskEnd; ++i) {
     if (i >= points.length()) {
       break;
@@ -347,14 +347,15 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
     MPoint origin;
     MVector normal, up;
     CalculateBasisComponents(sampleWeights[index], baryCoords[index], triangleVerts[i],
-                             driverPoints, driverNormals, sampleIds[index], origin, up, normal);
+                             driverPoints, driverNormals, sampleIds[index], alignedStorage,
+                             origin, up, normal);
 
-    MMatrix matrix;
     CreateMatrix(origin, normal, up, matrix);
     matrix = scaleMatrix * matrix;
     MPoint newPt = ((points[i]  * drivenMatrix) * (bindMatrices[index] * matrix)) * drivenInverseMatrix;
     points[i] = points[i] + ((newPt - points[i]) * paintWeights[i] * env);
   }
+  _mm_free(alignedStorage);
   return 0;
 }
 

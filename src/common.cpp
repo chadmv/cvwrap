@@ -11,9 +11,11 @@
 #include <queue>
 #include <utility>
 
+//#define NO_INTRINSICS
 #define NORMALIZATION_INDEX -1
 #define MM256_SHUFFLE(fp3,fp2,fp1,fp0) (((fp3) << 3) | ((fp2) << 2) | \
                                      ((fp1) << 1) | ((fp0)))
+
 void StartProgress(const MString& title, unsigned int count) {
   if (MGlobal::mayaState() == MGlobal::kInteractive) {
     MString message = "progressBar -e -bp -ii true -st \"";
@@ -290,7 +292,7 @@ void CalculateSampleWeights(const std::map<int, double>& distances, double radiu
     samples.push_back(std::pair<int, double>(0, 0.0));
   }
 
-  unsigned int length = (unsigned int)distances.size();
+  unsigned int length = (unsigned int)samples.size();
   weights.setLength(length);
   vertexIds.setLength(length);
   std::sort(samples.begin(), samples.end(), SampleSort);
@@ -326,10 +328,32 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
 void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coords,
                               const MIntArray& triangleVertices, const MPointArray& points,
                               const MFloatVectorArray& normals, const MIntArray& sampleIds,
+                              double* alignedStorage,
                               MPoint& origin, MVector& up, MVector& normal) {
   // Start with the recreated point and normal using the barycentric coordinates of the hit point.
-  
   unsigned int hitIndex = weights.length()-1;
+#ifdef NO_INTRINSICS
+  MPoint hitPoint;
+  MVector hitNormal;
+  for (int i = 0; i < 3; ++i) {
+    hitPoint += points[triangleVertices[i]] * coords[i];
+    hitNormal += MVector(normals[triangleVertices[i]]) * coords[i];
+  }
+  // Create the barycentric point and normal.
+  origin = hitPoint * weights[hitIndex];
+  normal = hitNormal * weights[hitIndex];
+  // Then use the weighted adjacent data.
+  for (unsigned int j = 0; j < hitIndex; j++) {
+    origin += MVector(points[sampleIds[j]]) * weights[j];
+    normal += MVector(normals[sampleIds[j]]) * weights[j];
+  }
+
+  // Calculate the up vector
+  up = (hitPoint - origin) * weights[hitIndex];
+  for (unsigned int j = 0; j < hitIndex; j++) {
+    up += (points[sampleIds[j]] - origin) * weights[j];
+  }
+#else
   __m256d hitPointV = Dot4<MPoint>(coords[0], coords[1], coords[2], 0.0,
                                 points[triangleVertices[0]], points[triangleVertices[1]],
                                 points[triangleVertices[2]], MPoint::origin);
@@ -337,19 +361,31 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
                                 normals[triangleVertices[0]], normals[triangleVertices[1]],
                                 normals[triangleVertices[2]], MVector::zero);
   __m256d hitWeightV = _mm256_set1_pd(weights[hitIndex]);
+  // Create the barycentric point and normal.
   __m256d originV = _mm256_mul_pd(hitPointV, hitWeightV);
   __m256d normalV = _mm256_mul_pd(hitNormalV, hitWeightV);
+  // Then use the weighted adjacent data.
   for (unsigned int j = 0; j < hitIndex; j += 4) {
     __m256d tempOrigin = Dot4<MPoint>(weights[j], weights[j+1], weights[j+2], weights[j+3],
                                       points[sampleIds[j]], points[sampleIds[j+1]],
-                                      points[sampleIds[j+3]], points[sampleIds[j+3]]);
+                                      points[sampleIds[j+2]], points[sampleIds[j+3]]);
     originV = _mm256_add_pd(tempOrigin, originV);
 
     __m256d tempNormal = Dot4<MVector>(weights[j], weights[j+1], weights[j+2], weights[j+3],
                                        normals[sampleIds[j]], normals[sampleIds[j+1]],
-                                       normals[sampleIds[j+3]], normals[sampleIds[j+3]]);
+                                       normals[sampleIds[j+2]], normals[sampleIds[j+3]]);
     normalV = _mm256_add_pd(tempNormal, normalV);
   }
+
+  //double values[4];
+  _mm256_store_pd(alignedStorage, originV);
+  origin.x = alignedStorage[0];
+  origin.y = alignedStorage[1];
+  origin.z = alignedStorage[2];
+  _mm256_store_pd(alignedStorage, normalV);
+  normal.x = alignedStorage[0];
+  normal.y = alignedStorage[1];
+  normal.z = alignedStorage[2];
 
   // Calculate the up vector
   __m256d upV = _mm256_mul_pd(_mm256_sub_pd(hitPointV, originV), hitWeightV);
@@ -363,45 +399,11 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
                                    v1, v2, v3, v4);
     upV = _mm256_add_pd(tempUp, upV);
   }
-  
-  double values[4];
-  _mm256_store_pd(values, normalV);
-  normal.x = values[0];
-  normal.y = values[1];
-  normal.z = values[2];
-  _mm256_store_pd(values, originV);
-  origin.x = values[0];
-  origin.y = values[1];
-  origin.z = values[2];
-  _mm256_store_pd(values, upV);
-  up.x = values[0];
-  up.y = values[1];
-  up.z = values[2];
-  
-  
-  /*
-  MPoint hitPoint;
-  MVector hitNormal;
-  for (int i = 0; i < 3; ++i) {
-    hitPoint += points[triangleVertices[i]] * coords[i];
-    hitNormal += MVector(normals[triangleVertices[i]]) * coords[i];
-  }
-  // Then use the weighted adjacent data.
-  unsigned int hitIndex = weights.length()-1;
-  for (unsigned int j = 0; j < hitIndex; j++) {
-    normal += MVector(normals[sampleIds[j]]) * weights[j];
-    origin += MVector(points[sampleIds[j]]) * weights[j];
-  }
-  // Add the recreated barycentric point and normal.
-  normal += hitNormal * weights[hitIndex];
-  origin += hitPoint * weights[hitIndex];
-  
-  for (unsigned int j = 0; j < hitIndex; j++) {
-    up += (points[sampleIds[j]] - origin) * weights[j];
-  }
-  up += (hitPoint - origin) * weights[hitIndex];
-  */
-  normal.normalize();
+  _mm256_store_pd(alignedStorage, upV);
+  up.x = alignedStorage[0];
+  up.y = alignedStorage[1];
+  up.z = alignedStorage[2];
+#endif
 
   GetValidUpAndNormal(weights, points, sampleIds, origin, up, normal);
 }
@@ -412,9 +414,9 @@ void GetValidUpAndNormal(const MDoubleArray& weights, const MPointArray& points,
                          MVector& normal) {
   MVector unitUp = up.normal();
   // Adjust up if it's parallel to normal or if it's zero length
-  if (unitUp * normal == 1.0 || up.length() < 0.0001) {
+  if (abs((unitUp * normal) - 1.0) < 0.001 || up.length() < 0.0001) {
     for (unsigned int j = 0; j < weights.length()-1; ++j) {
-      if (unitUp * normal != 1.0 && up.length() > 0.0001) {
+      if (abs((unitUp * normal) - 1.0) > 0.001 && up.length() > 0.0001) {
         // If the up and normal vectors are no longer parallel and the up vector has a length,
         // then we are good to go.
         break;

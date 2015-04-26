@@ -161,6 +161,7 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
 void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coords,
                               const MIntArray& triangleVertices, const MPointArray& points,
                               const MFloatVectorArray& normals, const MIntArray& sampleIds,
+                              double* alignedStorage,
                               MPoint& origin, MVector& up, MVector& normal);
 
 /**
@@ -230,15 +231,9 @@ __m256d Dot4(double w1, double w2, double w3, double w4,
   // low to high: xy02+xy03 xy12+xy13 xy20+xy21 xy30+xy31
   __m256d swapped = _mm256_permute2f128_pd(temp01, temp23, 0x21);
   // low to high: xy00+xy01 xy10+xy11 xy22+xy23 xy32+xy33
-  __m256d blended = _mm256_blend_pd(temp01, temp23, 0x0C);
+  __m256d blended = _mm256_blend_pd(temp01, temp23, 0xC);
   __m256d dotproduct = _mm256_add_pd(swapped, blended);
   return dotproduct;
-  /*double values[4];
-  _mm256_store_pd(values, dotproduct);
-  x = values[0];
-  y = values[1];
-  z = values[2];*/
 }
-
 
 #endif

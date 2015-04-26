@@ -10,6 +10,7 @@
 #include <cassert>
 
 #define PROGRESS_STEP 100
+#define TASK_COUNT 32
 
 const char* CVWrapCmd::kName = "cvWrap";
 const char* CVWrapCmd::kNameFlagShort = "-n";
@@ -377,8 +378,8 @@ MStatus CVWrapCmd::CalculateBinding() {
     bindData.triangleVertices.resize(itGeo.count());
 
     // Send off the threads to calculate the binding.
-    ThreadData<BindData> threadData[32];
-    CreateThreadData<BindData>(32, itGeo.count(), &bindData, threadData);
+    ThreadData<BindData> threadData[TASK_COUNT];
+    CreateThreadData<BindData>(TASK_COUNT, itGeo.count(), &bindData, threadData);
     MThreadPool::init();
     MThreadPool::newParallelRegion(CreateTasks, (void *)threadData);
     MThreadPool::release();
@@ -467,6 +468,7 @@ MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
   unsigned int taskStart = pThreadData->start;
   unsigned int taskEnd = pThreadData->end;
 
+  double* alignedStorage = (double*) _mm_malloc (4*sizeof(double),256);
   for (unsigned int i = taskStart; i < taskEnd; ++i) {
     if (i >= inputPoints.length()) {
       break;
@@ -507,10 +509,11 @@ MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
     MVector up;
     MVector normal;
     CalculateBasisComponents(weights[i], coords[i], triangleVertices[i], driverPoints,
-                             driverNormals, sampleIds[i], origin, up, normal);
+                             driverNormals, sampleIds[i], alignedStorage, origin, up, normal);
     CreateMatrix(origin, normal, up, bindMatrices[i]);
     bindMatrices[i] = bindMatrices[i].inverse();
   }
+  _mm_free(alignedStorage);
   return 0;
 }
 
