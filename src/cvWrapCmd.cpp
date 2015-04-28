@@ -6,11 +6,19 @@
 #include <maya/MItDependencyGraph.h>
 #include <maya/MItSelectionList.h>
 #include <maya/MMeshIntersector.h>
+#include <maya/MFnWeightGeometryFilter.h>
 #include <maya/MSyntax.h>
 #include <cassert>
 
 #define PROGRESS_STEP 100
 #define TASK_COUNT 32
+
+/**
+  A version number used to support future updates to the binary wrap binding file.
+*/
+const float kWrapFileVersion = 1.0f;
+
+
 
 const char* CVWrapCmd::kName = "cvWrap";
 const char* CVWrapCmd::kNameFlagShort = "-n";
@@ -43,6 +51,29 @@ void DisplayHelp() {
   help += "-binding (-b):       String     Path to a file to import the binding from on creation.\n"; 
   help += "-help (-h)           N/A        Display this text.\n";
   MGlobal::displayInfo(help);
+}
+
+
+template <>
+void WriteAttribute<double, MMatrix>(std::ofstream &out, const MMatrix& attribute) {
+  double values[16];
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      values[i*4 + j] = attribute[i][j];
+    }
+  }
+  out.write((char *)values, 16 * sizeof(double));
+}
+
+template <>
+void ReadAttribute<double, MMatrix>(std::ifstream &in, MMatrix &matrix) {
+  double values[16];
+  in.read((char *)values, 16 * sizeof(double));
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      matrix[i][j] = values[(i * 4) + j];
+    }
+  }
 }
 
 
@@ -183,11 +214,23 @@ MStatus CVWrapCmd::GetGeometryPaths() {
 MStatus CVWrapCmd::redoIt() {
   MStatus status;
   if (command_ == kCommandImport) {
-    status = ImportBinding();
+    std::ifstream in(filePath_.asChar(), ios::binary);
+    if (!in.is_open()) {
+      MGlobal::displayInfo("Unable to open file for importing.");
+      CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
+    }
+    status = ImportBinding(in);
+    in.close();
     CHECK_MSTATUS_AND_RETURN_IT(status);
     return MS::kSuccess;
   } else if (command_ == kCommandExport) {
-    status = ExportBinding();
+    std::ofstream out(filePath_.asChar(), ios::binary);
+    if (!out.is_open()) {
+      MGlobal::displayError("Unable to open file for writing.");
+      return MS::kFailure;
+    }
+    status = ExportBinding(out);
+    out.close();
     CHECK_MSTATUS_AND_RETURN_IT(status);
     return MS::kSuccess;
   } else if (command_ == kCommandCreate) {
@@ -217,7 +260,13 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
 
   if (useBinding_) {
     // Import a pre-existing binding.
-    status = ImportBinding();
+    std::ifstream in(filePath_.asChar(), ios::binary);
+    if (!in.is_open()) {
+      MGlobal::displayInfo("Unable to open file for importing.");
+      CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
+    }
+    status = ImportBinding(in);
+    in.close();
     CHECK_MSTATUS_AND_RETURN_IT(status);
   } else {
     status = CalculateBinding();
@@ -576,334 +625,191 @@ MStatus CVWrapCmd::undoIt() {
 }
 
 
-MStatus CVWrapCmd::ExportBinding()
-{
-    MStatus status;
-    MFnDependencyNode fnWrapNode(oWrapNode_, &status);
+MStatus CVWrapCmd::ExportBinding(std::ofstream& out) {
+  MStatus status;
+  MFnWeightGeometryFilter fnWrapNode(oWrapNode_, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+
+  if (fnWrapNode.typeId() != CVWrap::id) {
+    MGlobal::displayError(fnWrapNode.name() + " is not a cvWrap node.");
+    CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
+  }
+
+  out.write((char *)&kWrapFileVersion, sizeof(float));
+
+  MPlug plugBindData = fnWrapNode.findPlug(CVWrap::aBindData, false, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  // Get the input geometry so we can get the geometry indices
+  MObjectArray outputGeometry;
+  status = fnWrapNode.getOutputGeometry(outputGeometry);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  // Write the number of geometry
+  unsigned int geometryCount = outputGeometry.length();
+  out.write((char *)(&geometryCount), sizeof(geometryCount));
+
+  MIntArray triangleVerts(3);  /**< Storage for the triangle vertex ids. */
+  MFloatArray baryCoords(3);  /**< Storage for the barycentric weights. */
+  for (unsigned int i = 0; i < outputGeometry.length(); ++i) {
+    unsigned int geomIndex = fnWrapNode.indexForOutputShape(outputGeometry[i], &status);
+    // Get the plugs to the binding attributes for this geometry
+    MPlug plugBind = plugBindData.elementByLogicalIndex(geomIndex, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugSampleWeights = plugBind.child(CVWrap::aSampleWeights, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugSampleVerts = plugBind.child(CVWrap::aSampleComponents, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugSampleBindMatrix = plugBind.child(CVWrap::aBindMatrix, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugTriangleVerts = plugBind.child(CVWrap::aTriangleVerts, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugBarycentricWeights = plugBind.child(CVWrap::aBarycentricWeights, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
 
-    if (fnWrapNode.typeId() != CVWrap::id)
-    {
-        CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
+    unsigned int numElements = plugSampleWeights.numElements();
+    out.write((char *)(&numElements), sizeof(numElements));
+  
+    for (unsigned int i = 0; i < numElements; ++i) {
+      // Write the logical index
+      MPlug plugSampleVertElement = plugSampleVerts.elementByPhysicalIndex(i, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      unsigned int logicalIndex = plugSampleVertElement.logicalIndex();
+      out.write((char *)(&logicalIndex), sizeof(logicalIndex));
+
+      // Export sample vertex ids
+      MObject oSampleIds = plugSampleVertElement.asMObject();
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      MFnIntArrayData fnIntData(oSampleIds, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      MIntArray sampleIds = fnIntData.array();
+      WriteAttribute<int, MIntArray>(out, sampleIds);
+
+      // Export sample weights
+      MObject oWeightData = plugSampleWeights.elementByPhysicalIndex(i, &status).asMObject();
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      MFnDoubleArrayData fnDoubleData(oWeightData);
+      MDoubleArray weights = fnDoubleData.array();
+      WriteAttribute<double, MDoubleArray>(out, weights);
+
+      // Export bind matrix
+      MObject oBindMatrix = plugSampleBindMatrix.elementByPhysicalIndex(i, &status).asMObject();
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      MFnMatrixData fnMatrixData(oBindMatrix, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      WriteAttribute<double, MMatrix>(out, fnMatrixData.matrix());
+
+      // Export triangle vertices
+      MObject oTriangleVerts = plugTriangleVerts.elementByPhysicalIndex(i, &status).asMObject();
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      MFnNumericData fnNumericData(oTriangleVerts, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      fnNumericData.getData3Int(triangleVerts[0], triangleVerts[1], triangleVerts[2]);
+      WriteAttribute<int, MIntArray>(out, triangleVerts);
+
+      // Export the barycentric weights
+      MObject oBaryWeights = plugBarycentricWeights.elementByPhysicalIndex(i, &status).asMObject();
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      MFnNumericData fnBaryData(oBaryWeights, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      fnBaryData.getData3Float(baryCoords[0], baryCoords[1], baryCoords[2]);
+      WriteAttribute<float, MFloatArray>(out, baryCoords);
     }
+  }
 
-    std::ofstream out(filePath_.asChar(), ios::binary);
-    if (!out.is_open())
-    {
-        MGlobal::displayError("Unable to open file for writing.");
-        CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
-    }
+  MGlobal::displayInfo("Wrap binding exported.");
 
-    MFnSingleIndexedComponent fnComp;
-    MFnComponentListData fnCompData;
-    MFnNumericData fnNumericData;
-    MFnMatrixData fnMatrixData;
-    MMatrix matrix;
-    MObject oTemp;
-    MFloatArray tempCoords(3);
-    MIntArray triangleVerts(3);
-    MDoubleArray tempWeights;
-    MIntArray sampleIds;
-    MIntArray tempIds;
-    MObject oComp;
-
-    MPlug plugSampleWeights(oWrapNode_, CVWrap::aSampleWeights);
-    MPlug plugSampleVerts(oWrapNode_, CVWrap::aSampleComponents);
-    MPlug plugSampleBindMatrix(oWrapNode_, CVWrap::aBindMatrix);
-
-    float version = 1.0f;
-    out.write((char *)&version, sizeof(float));
-
-    unsigned int numVerts = plugSampleWeights.numElements();
-    out.write((char *)(&numVerts), sizeof(int));
-
-    // Start progress bar
-    StartProgress("Exporting wrap...", numVerts);
-    for (unsigned int i = 0; i < numVerts; ++i) {
-        // Export sample vertex ids
-        oTemp = plugSampleVerts.elementByPhysicalIndex(i, &status).asMObject();
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        status = fnCompData.setObject(oTemp);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-
-        sampleIds.clear();
-        for (unsigned int j = 0; j < fnCompData.length(); j++)
-        {
-            oComp = fnCompData[j];
-            if (oComp.hasFn(MFn::kSingleIndexedComponent))
-            {
-                status = fnComp.setObject(oComp);
-                CHECK_MSTATUS_AND_RETURN_IT(status);
-                fnComp.getElements(tempIds);
-                for(unsigned int k = 0; k < tempIds.length(); k++)
-                {
-                    sampleIds.append(tempIds[k]);
-                }
-            }
-        }
-        writeAttribute(out, sampleIds);
-
-        // Export sample weights
-        oTemp = plugSampleWeights.elementByPhysicalIndex(i, &status).asMObject();
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        MFnDoubleArrayData fnDoubleData(oTemp);
-        tempWeights = fnDoubleData.array();
-        writeAttribute(out, tempWeights);
-
-        // Export bind matrix
-        oTemp = plugSampleBindMatrix.elementByPhysicalIndex(i, &status).asMObject();
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        status = fnMatrixData.setObject(oTemp);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        writeAttribute(out, fnMatrixData.matrix());
-
-        // Increment the progress bar
-        if (i % 250 == 0 && i != 0) {
-          StepProgress(250);
-          if(ProgressCancelled()) {
-            break;
-          }
-        }
-    }
-    EndProgress();
-    out.close();
-
-    MGlobal::displayInfo("Wrap binding exported.");
-
-    return status;
+  return status;
 }
 
 
-MStatus CVWrapCmd::writeAttribute(std::ofstream &out, const MIntArray &attribute)
-{
-    unsigned int length = attribute.length();
-    out.write((char *)(&length), sizeof(int));
-    if (length > 0)
-    {
-        int * pAttr = new int[length];
-        attribute.get(pAttr);
-        out.write((char *)pAttr, length * sizeof(int));
-        delete [] pAttr;
+MStatus CVWrapCmd::ImportBinding(std::ifstream& in) {
+  MStatus status;
+
+  MFnWeightGeometryFilter fnWrapNode(oWrapNode_, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MPlug plugBindData = fnWrapNode.findPlug(CVWrap::aBindData, false, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+
+  float version;
+  in.read((char *)(&version), sizeof(float));
+
+  unsigned int geometryCount = 0;
+  in.read((char *)(&geometryCount), sizeof(geometryCount));
+
+  MFnMatrixData fnMatrixData;
+  MFnIntArrayData fnIntData;
+  MFnDoubleArrayData fnDoubleData;
+  MFnNumericData fnNumericData;
+  // We are assuming that the geometryIndices are compact and continuous.  It is possible
+  // that the indices could be sparse, but we will ignore that corner case.
+  for (unsigned int geomIndex = 0; geomIndex < geometryCount; ++geometryCount) {
+    // Get the plugs to the binding attributes for this geometry
+    MPlug plugBind = plugBindData.elementByLogicalIndex(geomIndex, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugSampleWeights = plugBind.child(CVWrap::aSampleWeights, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugSampleVerts = plugBind.child(CVWrap::aSampleComponents, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugSampleBindMatrix = plugBind.child(CVWrap::aBindMatrix, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugTriangleVerts = plugBind.child(CVWrap::aTriangleVerts, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MPlug plugBarycentricWeights = plugBind.child(CVWrap::aBarycentricWeights, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+
+    unsigned int numElements = plugSampleWeights.numElements();
+    in.read((char *)(&numElements), sizeof(numElements));
+    for (unsigned int i = 0; i < numElements; ++i) {
+      unsigned int logicalIndex = 0;
+      in.read((char *)(&logicalIndex), sizeof(logicalIndex));
+
+      // Sample vert ids.
+      MIntArray sampleIds;
+      ReadAttribute<int, MIntArray>(in, sampleIds);
+      MObject oIntData = fnIntData.create(sampleIds, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugSampleVerts.elementByLogicalIndex(logicalIndex, &status).setMObject(oIntData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Sample weights
+      MDoubleArray weights;
+      ReadAttribute<double, MDoubleArray>(in, weights);
+      MObject oDoubleData = fnDoubleData.create(weights, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugSampleWeights.elementByLogicalIndex(logicalIndex, &status).setMObject(oDoubleData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Bind matrix
+      MMatrix bindMatrix;
+      ReadAttribute<double, MMatrix>(in, bindMatrix);
+      MObject oMatrixData = fnMatrixData.create(bindMatrix, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugSampleBindMatrix.elementByLogicalIndex(logicalIndex, &status).setMObject(oMatrixData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Triangle vertices
+      MIntArray triangleVertices;
+      ReadAttribute<int, MIntArray>(in, triangleVertices);
+      MObject oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      status = fnNumericData.setData3Int(triangleVertices[0], triangleVertices[1],
+                                         triangleVertices[2]);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugTriangleVerts.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+
+      // Barycentric coordinates
+      MFloatArray coords;
+      ReadAttribute<float, MFloatArray>(in, coords);
+      oNumericData = fnNumericData.create(MFnNumericData::k3Float, &status);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      status = fnNumericData.setData3Float(coords[0], coords[1], coords[2]);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
+      plugBarycentricWeights.elementByLogicalIndex(logicalIndex, &status).setMObject(oNumericData);
+      CHECK_MSTATUS_AND_RETURN_IT(status);
     }
-    return MS::kSuccess;
+  }
+  MGlobal::displayInfo("Wrap binding imported.");
+
+  return MS::kSuccess;
 }
-
-
-MStatus CVWrapCmd::writeAttribute(std::ofstream &out, const MDoubleArray &attribute)
-{
-    unsigned int length = attribute.length();
-    out.write((char *)(&length), sizeof(int));
-    if (length > 0)
-    {
-        double * pAttr = new double[length];
-        attribute.get(pAttr);
-        out.write((char *)pAttr, length * sizeof(double));
-        delete [] pAttr;
-    }
-    return MS::kSuccess;
-}
-
-
-MStatus CVWrapCmd::writeAttribute(std::ofstream &out, const MFloatArray &attribute)
-{
-    unsigned int length = attribute.length();
-    out.write((char *)(&length), sizeof(int));
-    if (length > 0)
-    {
-        float * pAttr = new float[length];
-        attribute.get(pAttr);
-        out.write((char *)pAttr, length * sizeof(float));
-        delete [] pAttr;
-    }
-    return MS::kSuccess;
-}
-
-
-MStatus CVWrapCmd::writeAttribute(std::ofstream &out, const MMatrix &attribute)
-{
-    unsigned int length = 16;
-    out.write((char *)(&length), sizeof(int));
-    double pAttr[16];
-    for (int i = 0; i < 4; i++)
-    {
-        for (int j = 0; j < 4; j++)
-        {
-            pAttr[(i * 4) + j] = attribute[i][j];
-        }
-    }
-    out.write((char *)pAttr, length * sizeof(double));
-    return MS::kSuccess;
-}
-
-
-MStatus CVWrapCmd::ImportBinding()
-{
-    MStatus status;
-
-    std::ifstream in(filePath_.asChar(), ios::binary);
-    if (!in.is_open())
-    {
-        MGlobal::displayInfo("Unable to open file for importing.");
-        CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
-    }
-
-    MFnSingleIndexedComponent fnComp;
-    MFnComponentListData fnCompData;
-    MFnNumericData fnNumericData;
-    MFnMatrixData fnMatrixData;
-    MMatrix matrix;
-    MObject oTemp, oData;
-    MPlug plugTemp;
-    MFloatArray tempCoords(3);
-    MIntArray triangleVerts(3);
-    MDoubleArray tempWeights;
-    MIntArray sampleIds;
-    MFnDoubleArrayData fnDoubleData;
-
-    MPlug plugSampleWeights(oWrapNode_, CVWrap::aSampleWeights);
-    MPlug plugSampleVerts(oWrapNode_, CVWrap::aSampleComponents);
-    MPlug plugSampleBindMatrix(oWrapNode_, CVWrap::aBindMatrix);
-
-    float version;
-    in.read((char *)(&version), sizeof(float));
-
-    int numVerts;
-    in.read((char *)(&numVerts), sizeof(int));
-    //if (numVerts != numDrivenVerts)
-    //{
-    //    char buffer[256];
-    //    sprintf(buffer, "Mesh has %d vertices. Binding file containts %d vertices", numDrivenVerts, numVerts);
-    //    MGlobal::displayError(buffer);
-    //    in.close();
-    //    return MS::kFailure;
-    //}
-    StartProgress("Importing wrap...", numVerts);
-    for (int i = 0; i < numVerts; i++)
-    {
-        // Import sample vertex ids
-        readAttribute(in, sampleIds);
-        oTemp = fnComp.create(MFn::kMeshVertComponent, &status);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        status = fnComp.addElements(sampleIds);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        oData = fnCompData.create(&status);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        status = fnCompData.add(oTemp);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        plugSampleVerts.elementByLogicalIndex(i, &status).setMObject(oData);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-
-        // Import sample weights
-        readAttribute(in, tempWeights);
-        MFnDoubleArrayData fnDoubleData;
-        oData = fnDoubleData.create(tempWeights, &status);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        plugSampleWeights.elementByLogicalIndex(i, &status).setMObject(oData);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-
-        // Import bind matrix
-        readAttribute(in, matrix);
-        oData = fnMatrixData.create(matrix);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        plugSampleBindMatrix.elementByLogicalIndex(i, &status).setMObject(oData);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-
-        // Increment the progress bar
-        if (i % 250 == 0 && i != 0) {
-          StepProgress(250);
-          if (ProgressCancelled()) {
-            break;
-          }
-        }
-    }
-    EndProgress();
-    in.close();
-    MGlobal::displayInfo("Wrap binding imported.");
-
-    return MS::kSuccess;
-}
-
-
-MStatus CVWrapCmd::readAttribute(std::ifstream &in, MIntArray &attribute)
-{
-    attribute.clear();
-    int numValues;
-    in.read((char *)(&numValues), sizeof(int));
-    if (numValues > 0)
-    {
-        attribute.setLength(numValues);
-        int * pValues = new int[numValues];
-        in.read((char *)pValues, numValues * sizeof(int));
-        for (int i = 0; i < numValues; i++)
-        {
-            attribute[i] = pValues[i];
-        }
-        delete [] pValues;
-    }
-
-    return MS::kSuccess;
-}
-
-
-MStatus CVWrapCmd::readAttribute(std::ifstream &in, MDoubleArray &attribute)
-{
-    attribute.clear();
-    int numValues;
-    in.read((char *)(&numValues), sizeof(int));
-    if (numValues > 0)
-    {
-        attribute.setLength(numValues);
-        double * pValues = new double[numValues];
-        in.read((char *)pValues, numValues * sizeof(double));
-        for (int i = 0; i < numValues; i++)
-        {
-            attribute[i] = pValues[i];
-        }
-        delete [] pValues;
-    }
-    return MS::kSuccess;
-}
-
-
-MStatus CVWrapCmd::readAttribute(std::ifstream &in, MFloatArray &attribute)
-{
-    attribute.clear();
-    int numValues;
-    in.read((char *)(&numValues), sizeof(int));
-    if (numValues > 0)
-    {
-        attribute.setLength(numValues);
-        float * pValues = new float[numValues];
-        in.read((char *)pValues, numValues * sizeof(float));
-        for (int i = 0; i < numValues; i++)
-        {
-            attribute[i] = pValues[i];
-        }
-        delete [] pValues;
-    }
-    return MS::kSuccess;
-}
-
-
-MStatus CVWrapCmd::readAttribute(std::ifstream &in, MMatrix &matrix)
-{
-    int numValues;
-    in.read((char *)(&numValues), sizeof(int));
-    if (numValues > 0)
-    {
-        double * pValues = new double[numValues];
-        in.read((char *)pValues, numValues * sizeof(double));
-        for (int i = 0; i < 4; i++)
-        {
-            for (int j = 0; j < 4; j++)
-            {
-                matrix[i][j] = pValues[(i * 4) + j];
-            }
-        }
-        delete [] pValues;
-    }
-    return MS::kSuccess;
-}
-
-
 

@@ -157,20 +157,12 @@ class CVWrapCmd : public MPxCommand {
   /**
     Exports the binding information to disk.
   */
-  MStatus ExportBinding();
-  MStatus writeAttribute( std::ofstream &out, const MIntArray &attribute );
-  MStatus writeAttribute( std::ofstream &out, const MDoubleArray &attribute );
-  MStatus writeAttribute( std::ofstream &out, const MFloatArray &attribute );
-  MStatus writeAttribute( std::ofstream &out, const MMatrix &attribute );
+  MStatus ExportBinding(std::ofstream& out);
 
   /**
     Imports the binding information from disk.
   */
-  MStatus ImportBinding();
-  MStatus readAttribute( std::ifstream &in, MIntArray &attribute );
-  MStatus readAttribute( std::ifstream &in, MDoubleArray &attribute );
-  MStatus readAttribute( std::ifstream &in, MFloatArray &attribute );
-  MStatus readAttribute( std::ifstream &out, MMatrix &attribute );
+  MStatus ImportBinding(std::ifstream& in);
 
   MString name_;  /**< Name of cvWrap node to create. */
   double radius_;  /**< Binding sample radius. */
@@ -189,6 +181,42 @@ class CVWrapCmd : public MPxCommand {
   
 };  
 
+
+template <typename dataType, typename container>
+void WriteAttribute(std::ofstream &out, const container& attribute) {
+  unsigned int length = attribute.length();
+  out.write((char *)(&length), sizeof(length));
+  if (length > 0) {
+    dataType * pAttr = new dataType[length];
+    attribute.get(pAttr);
+    out.write((char *)pAttr, length * sizeof(dataType));
+    delete [] pAttr;
+  }
+}
+
+
+template <>
+void WriteAttribute<double, MMatrix>(std::ofstream &out, const MMatrix& attribute);
+
+
+template <typename dataType, typename container>
+void ReadAttribute(std::ifstream &in, container &attribute) {
+  attribute.clear();
+  unsigned int length;
+  in.read((char *)(&length), sizeof(length));
+  if (length > 0) {
+    attribute.setLength(length);
+    dataType* pValues = new dataType[length];
+    in.read((char *)pValues, length * sizeof(int));
+    for (unsigned int i = 0; i < length; i++) {
+      attribute[i] = pValues[i];
+    }
+    delete [] pValues;
+  }
+}
+
+template <>
+void ReadAttribute<double, MMatrix>(std::ifstream &in, MMatrix &matrix);
 
 
 #endif

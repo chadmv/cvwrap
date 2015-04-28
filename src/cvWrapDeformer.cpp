@@ -231,8 +231,6 @@ MStatus CVWrap::GetBindInfo(MDataBlock& data, unsigned int geomIndex) {
   hTriangleVerts.jumpToArrayElement(0);
   hBarycentricWeights.jumpToArrayElement(0);
 
-  MFnSingleIndexedComponent fnSingleComp;
-  MFnComponentListData fnCompData;
   MFnNumericData fnNumericData;
   TaskData& taskData = taskData_[geomIndex];
   taskData.bindMatrices.setLength(numVerts);

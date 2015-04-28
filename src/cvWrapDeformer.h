@@ -7,13 +7,10 @@
 #include <maya/MDoubleArray.h>
 #include <maya/MFloatArray.h>
 #include <maya/MFloatVectorArray.h>
-#include <maya/MFnComponentListData.h>
 #include <maya/MFnData.h>
 #include <maya/MFnDoubleArrayData.h>
 #include <maya/MFnIntArrayData.h>
 #include <maya/MFnMesh.h>
-#include <maya/MFnSingleIndexedComponent.h>
-#include <maya/MFnVectorArrayData.h>
 #include <maya/MGlobal.h>
 #include <maya/MIntArray.h>
 #include <maya/MMatrix.h> 
