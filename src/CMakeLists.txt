@@ -4,6 +4,8 @@ set(SOURCE_FILES
     "cvWrapCmd.h"
     "cvWrapDeformer.cpp"
     "cvWrapDeformer.h"
+    "bindingexporter.cpp"
+    "bindingexporter.h"
     #"cvWrapRebindCmd.cpp"
     #"cvWrapRebindCmd.h"
     "common.cpp"
