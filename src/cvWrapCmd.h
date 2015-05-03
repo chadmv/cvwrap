@@ -9,6 +9,7 @@
 #include <maya/MFloatVectorArray.h>
 #include <maya/MMatrixArray.h>
 #include <maya/MMeshIntersector.h>
+#include <maya/MObjectArray.h>
 #include <maya/MPlug.h>
 #include <maya/MPointArray.h>
 #include <maya/MSelectionList.h>
@@ -35,6 +36,7 @@ struct BindData {
   std::vector<MIntArray> perFaceVertices;  /**< The per-face vertex ids of the driver. */
   std::vector<std::vector<MIntArray> > perFaceTriangleVertices;  /**< The per-face per-triangle vertex ids of the driver. */
   MMeshIntersector intersector;  /**< Closest point intersector on the driver mesh. */
+  MMeshIntersector subsetIntersector;  /**< Closest point intersector on a subset mesh if we are rebinding. */
   std::vector<std::set<int> > adjacency;  /**< Driver adjacency for surface crawling. */
   MMatrix driverMatrix;  /**< Driver matrix to convert closest points into world space. */
   double radius;  /**< Max crawl sample radius. */
@@ -49,13 +51,14 @@ struct BindData {
   std::vector<MIntArray> triangleVertices;
 };
 
+
 /**
   The cvWrap command is used to create new cvWrap deformers and to import and export
   wrap bindings.
 */
 class CVWrapCmd : public MPxCommand {              
  public:
-  enum CommandMode { kCommandCreate, kCommandExport, kCommandImport, kCommandHelp };
+  enum CommandMode { kCommandCreate, kCommandExport, kCommandImport, kCommandHelp, kCommandRebind };
   CVWrapCmd();              
   virtual MStatus  doIt(const MArgList&);
   virtual MStatus  undoIt();
@@ -115,6 +118,12 @@ class CVWrapCmd : public MPxCommand {
   const static char* kBindingFlagLong;
 
   /**
+    Specifies that the user wants to rebind the select vertices.
+  */
+  const static char* kRebindFlagShort;
+  const static char* kRebindFlagLong;
+
+  /**
     Displays help.
   */
   const static char* kHelpFlagShort;
@@ -143,9 +152,16 @@ class CVWrapCmd : public MPxCommand {
   MStatus GetLatestWrapNode();
 
   /**
-    Calculates the binding data for the wrap deformer to work.
+    Create a new bind mesh and connect it to the wrap node.
+    The bind mesh the mesh at the time of binding and is used to calculate binding information.
   */
-  MStatus CalculateBinding();
+  MStatus CreateBindMesh(MDagPath& pathBindMesh);
+
+  /**
+    Calculates the binding data for the wrap deformer to work.
+    @param[in,out] dgMod The modifier to hold all the plug operations.
+  */
+  MStatus CalculateBinding(MDagPath& pathBindMesh, BindData& bindData, MDGModifier& dgMod);
     
   /**
     Gets the MDagPath of any existing bind wrap mesh so we don't have to duplicate it for each
@@ -153,6 +169,25 @@ class CVWrapCmd : public MPxCommand {
     @param[out] pathBindMesh Storage for path to an existing bind mesh
   */
   MStatus GetExistingBindMesh(MDagPath &pathBindMesh);
+
+  /**
+    Calculates new binding data for the selected components.
+  */
+  MStatus Rebind();
+
+  /**
+    Get the bind mesh connected to the wrap node.
+    @param[out] pathBindMesh The path to the bind mesh.
+  */
+  MStatus GetBindMesh(MDagPath& pathBindMesh);
+
+
+  /**
+    Creates the mesh with the subset of faces used to calculate the rebind.
+    @param[out] pathDriverSubset Path the new driver subset mesh.
+  */
+  MStatus CreateRebindSubsetMesh(MDagPath& pathDriverSubset);
+
 
   MString name_;  /**< Name of cvWrap node to create. */
   double radius_;  /**< Binding sample radius. */
@@ -164,7 +199,9 @@ class CVWrapCmd : public MPxCommand {
   MSelectionList selectionList_;  /**< Selected command input nodes. */
   MObject oWrapNode_;  /**< MObject to the cvWrap node in focus. */
   MDagPath pathDriver_;  /**< Path to the shape wrapping the other shape. */
+  MObject driverComponents_;  /**< Selected driver components used for rebinding. */
   MDagPathArray pathDriven_;  /**< Paths to the shapes being wrapped. */
+  MObjectArray drivenComponents_;  /**< Selected driven components used for rebinding. */
   MDGModifier dgMod_;
   MStringArray bindMeshes_;
 

@@ -62,8 +62,13 @@ bool IsShapeNode(MDagPath& path) {
 }
 
 
-MStatus GetShapeNode(MDagPath& path) {
+MStatus GetShapeNode(MDagPath& path, bool intermediate) {
   MStatus status;
+
+  if (IsShapeNode(path)) {
+    // Start at the transform so we can honor the intermediate flag.
+    path.pop();
+  }
 
   if (path.hasFn(MFn::kTransform)) {
     unsigned int shapeCount;
@@ -77,15 +82,13 @@ MStatus GetShapeNode(MDagPath& path) {
       // Make sure it is not an intermediate object.
       MFnDagNode fnNode(path, &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
-      if (!fnNode.isIntermediateObject()) {
+      if ((!fnNode.isIntermediateObject() && !intermediate) || 
+          (fnNode.isIntermediateObject() && intermediate)) {
         return MS::kSuccess;
       }
-      // Go to the next shape if this is an intermediate shape.
+      // Go to the next shape.
       path.pop();
     }
-  } else if (IsShapeNode(path)) {
-    // This is already a shape node.
-    return MS::kSuccess;
   }
 
   // No valid shape node found.
@@ -219,14 +222,16 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
       distances[vertexIndices[i]] = distance;
     }
     // Track the minimum start distance in case we need to add the closest vertex below.
-    if (distance < minStartDistance) {
+    // The minimum must be greater than 0 to make sure we do not use the vertex that is the
+    // same as the startPoint which would create an invalid up vector.
+    if (distance < minStartDistance && distance > 0.000001) {
       minStartDistance = distance;
       minStartIndex = vertexIndices[i];
     }
   }
-  // If we didn't even reach a vertex in the hit face, add the closest vertex so we can calculate
-  // a proper up vector
-  if (verticesToVisit.size() == 0) {
+  // If we didn't even reach a vertex in the hit face, or the startPoint is equal to a vertex
+  // on the face, add the closest vertex so we can calculate a proper up vector
+  if (verticesToVisit.size() <= 1) {
     CrawlData root = {startPoint, maxDistance - 0.001, minStartIndex};
     verticesToVisit.push(root);
     distances[minStartIndex] = maxDistance - 0.001;

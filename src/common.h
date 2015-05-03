@@ -60,9 +60,10 @@ bool IsShapeNode(MDagPath& path);
   Ensures that the given dag path points to a non-intermediate shape node.
   @param[in,out] path Path to a dag node that could be a transform or a shape.
   On return, the path will be to a shape node if one exists.
+  @param[in] intermediate true to get the intermediate shape.
   @return MStatus.
  */
-MStatus GetShapeNode(MDagPath& path);
+MStatus GetShapeNode(MDagPath& path, bool intermediate=false);
 
 
 /**

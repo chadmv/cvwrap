@@ -42,6 +42,8 @@ MStatus CVWrap::initialize() {
   -- bindData
      | -- sampleComponents
      | -- sampleWeights
+     | -- triangleVerts
+     | -- barycentricWeights
      | -- bindMatrix
   */
 
@@ -111,9 +113,15 @@ void* CVWrap::creator() { return new CVWrap(); }
 
 
 MStatus CVWrap::setDependentsDirty(const MPlug& plugBeingDirtied, MPlugArray& affectedPlugs) {
-  // TODO: Extract the geom index from the dirty plug and set the dirty flag
-  unsigned int geomIndex = 0;
-  //dirty_[geomIndex] = true;
+  // Extract the geom index from the dirty plug and set the dirty flag so we know that we need to
+  // re-read the binding data.
+  if (plugBeingDirtied.isElement()) {
+    MPlug parent = plugBeingDirtied.array().parent();
+    if (parent == aBindData) {
+      unsigned int geomIndex = parent.logicalIndex();
+      dirty_[geomIndex] = true;
+    }
+  }
   return MS::kSuccess;
 }
 
@@ -350,6 +358,8 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
 
     CreateMatrix(origin, normal, up, matrix);
     matrix = scaleMatrix * matrix;
+    MPoint dpt = points[i];
+    MMatrix tempMatrix = bindMatrices[index] * matrix;
     MPoint newPt = ((points[i]  * drivenMatrix) * (bindMatrices[index] * matrix)) * drivenInverseMatrix;
     points[i] = points[i] + ((newPt - points[i]) * paintWeights[i] * env);
   }
