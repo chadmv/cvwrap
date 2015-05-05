@@ -61,7 +61,7 @@ void ReadAttribute(std::ifstream &in, container &attribute) {
   if (length > 0) {
     attribute.setLength(length);
     dataType* pValues = new dataType[length];
-    in.read((char *)pValues, length * sizeof(int));
+    in.read((char *)pValues, length * sizeof(dataType));
     for (unsigned int i = 0; i < length; i++) {
       attribute[i] = pValues[i];
     }

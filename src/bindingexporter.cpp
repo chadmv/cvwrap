@@ -145,7 +145,7 @@ MStatus BindingExporter::ImportBinding(std::ifstream& in, MObject& oWrapNode) {
   MFnNumericData fnNumericData;
   // We are assuming that the geometryIndices are compact and continuous.  It is possible
   // that the indices could be sparse, but we will ignore that corner case.
-  for (unsigned int geomIndex = 0; geomIndex < geometryCount; ++geometryCount) {
+  for (unsigned int geomIndex = 0; geomIndex < geometryCount; ++geomIndex) {
     // Get the plugs to the binding attributes for this geometry
     MPlug plugBind = plugBindData.elementByLogicalIndex(geomIndex, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
