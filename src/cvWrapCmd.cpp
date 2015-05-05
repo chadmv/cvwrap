@@ -189,7 +189,8 @@ MStatus CVWrapCmd::GatherCommandArguments(const MArgList& args) {
 
 MStatus CVWrapCmd::GetGeometryPaths() {
   MStatus status;
-  status = selectionList_.getDagPath(0, pathDriver_, driverComponents_);
+  // The driver is selected last
+  status = selectionList_.getDagPath(selectionList_.length() - 1, pathDriver_, driverComponents_);
   CHECK_MSTATUS_AND_RETURN_IT(status);
   status = GetShapeNode(pathDriver_);
   // The driver must be a mesh for this specific algorithm.
@@ -199,18 +200,17 @@ MStatus CVWrapCmd::GetGeometryPaths() {
   }
 
   MItSelectionList iter(selectionList_);
-  iter.next(); // Skip the first selected mesh which is the driver
   CHECK_MSTATUS_AND_RETURN_IT(status);
   pathDriven_.clear();
   drivenComponents_.clear();
-  for ( ; !iter.isDone(); iter.next()) {
-      MDagPath path;
-      MObject component;
-      iter.getDagPath(path, component);
-      status = GetShapeNode(path);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      pathDriven_.append(path);
-      drivenComponents_.append(component);
+  for (unsigned int i = 0; i < selectionList_.length() - 1; ++i, iter.next()) {
+    MDagPath path;
+    MObject component;
+    iter.getDagPath(path, component);
+    status = GetShapeNode(path);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    pathDriven_.append(path);
+    drivenComponents_.append(component);
   }
   
   return MS::kSuccess;
