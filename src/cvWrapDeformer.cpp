@@ -1,9 +1,14 @@
 #include "cvWrapDeformer.h"
 #include <maya/MFnCompoundAttribute.h>
+#include <maya/MFnDoubleArrayData.h>
+#include <maya/MFnIntArrayData.h>
 #include <maya/MFnMatrixAttribute.h>
+#include <maya/MFnMesh.h>
 #include <maya/MFnMessageAttribute.h>
 #include <maya/MFnNumericAttribute.h>
 #include <maya/MFnTypedAttribute.h>
+#include <maya/MGlobal.h>
+#include <maya/MItGeometry.h>
 #include <cassert>
 
 MTypeId CVWrap::id(0x0011580B);
@@ -13,8 +18,6 @@ MObject CVWrap::aBindDriverGeo;
 MObject CVWrap::aDriverGeo;
 MObject CVWrap::aBindData;
 MObject CVWrap::aSampleVerts;
-MObject CVWrap::aRadius;
-MObject CVWrap::aBindInfo;
 MObject CVWrap::aSampleComponents;
 MObject CVWrap::aSampleWeights;
 MObject CVWrap::aTriangleVerts;
@@ -95,6 +98,119 @@ MStatus CVWrap::initialize() {
 }
 
 
+/**
+  Utility method used by both the MPxDeformer and MPxGPUDeformer to pull the bind data out
+  of the datablock.
+  @param[in] data The node datablock.
+  @param[in] geomIndex The geometry logical index.
+  @param[out] taskData Bind info storage.
+*/
+MStatus GetBindInfo(MDataBlock& data, unsigned int geomIndex, TaskData& taskData) {
+  MStatus status;
+  MArrayDataHandle hBindDataArray = data.inputArrayValue(CVWrap::aBindData);
+  status = hBindDataArray.jumpToElement(geomIndex);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MDataHandle hBindData = hBindDataArray.inputValue();
+
+  MArrayDataHandle hSampleWeights = hBindData.child(CVWrap::aSampleWeights);
+  unsigned int numVerts = hSampleWeights.elementCount();
+  if (numVerts == 0) {
+    // No binding information yet.
+    return MS::kNotImplemented;
+  }
+  MArrayDataHandle hComponents = hBindData.child(CVWrap::aSampleComponents);
+  MArrayDataHandle hBindMatrix = hBindData.child(CVWrap::aBindMatrix);
+  MArrayDataHandle hTriangleVerts = hBindData.child(CVWrap::aTriangleVerts);
+  MArrayDataHandle hBarycentricWeights = hBindData.child(CVWrap::aBarycentricWeights);
+
+  hSampleWeights.jumpToArrayElement(0);
+  hComponents.jumpToArrayElement(0);
+  hBindMatrix.jumpToArrayElement(0);
+  hTriangleVerts.jumpToArrayElement(0);
+  hBarycentricWeights.jumpToArrayElement(0);
+
+  MFnNumericData fnNumericData;
+  taskData.bindMatrices.setLength(numVerts);
+  taskData.sampleIds.resize(numVerts);
+  taskData.sampleWeights.resize(numVerts);
+  taskData.triangleVerts.resize(numVerts);
+  taskData.baryCoords.resize(numVerts);
+
+  int sampleLength = (int)taskData.bindMatrices.length();
+  for (unsigned int i = 0; i < numVerts; ++i) {
+    int logicalIndex = hComponents.elementIndex();
+    if (logicalIndex >= sampleLength) {
+      // Nurbs surfaces may be sparse so make sure we have enough space.
+      taskData.bindMatrices.setLength(logicalIndex+1);
+      taskData.sampleIds.resize(logicalIndex+1);
+      taskData.sampleWeights.resize(logicalIndex+1);
+      taskData.triangleVerts.resize(logicalIndex+1);
+      taskData.baryCoords.resize(logicalIndex+1);
+    }
+
+    // Get sample ids
+    MObject oIndexData = hComponents.inputValue().data();
+    MFnIntArrayData fnIntData(oIndexData, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    taskData.sampleIds[logicalIndex] = fnIntData.array();
+
+    // Get sample weights
+    MObject oWeightData = hSampleWeights.inputValue().data();
+    MFnDoubleArrayData fnDoubleData(oWeightData, &status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    taskData.sampleWeights[logicalIndex] = fnDoubleData.array();
+    assert(taskData.sampleWeights[logicalIndex].length() == taskData.sampleIds[logicalIndex].length());
+    
+    // Get bind matrix
+    taskData.bindMatrices[logicalIndex] = hBindMatrix.inputValue().asMatrix();
+
+    // Get triangle vertex binding
+    int3& verts = hTriangleVerts.inputValue(&status).asInt3();
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MIntArray& triangleVerts = taskData.triangleVerts[logicalIndex];
+    triangleVerts.setLength(3);
+    triangleVerts[0] = verts[0];
+    triangleVerts[1] = verts[1];
+    triangleVerts[2] = verts[2];
+
+    // Get barycentric weights
+    float3& baryWeights = hBarycentricWeights.inputValue(&status).asFloat3();
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    BaryCoords& coords = taskData.baryCoords[logicalIndex];
+    coords[0] = baryWeights[0];
+    coords[1] = baryWeights[1];
+    coords[2] = baryWeights[2];
+
+    hSampleWeights.next();
+    hComponents.next();
+    hBindMatrix.next();
+    hTriangleVerts.next();
+    hBarycentricWeights.next();
+  }
+  return MS::kSuccess;
+}
+
+MStatus GetDriverData(MDataBlock& data, TaskData& taskData) {
+  MStatus status;
+  // Get driver geo
+  MDataHandle hDriverGeo = data.inputValue(CVWrap::aDriverGeo, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MObject oDriverGeo = hDriverGeo.asMesh();
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MFnMesh fnDriver(oDriverGeo, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  // Get the driver point positions
+  status = fnDriver.getPoints(taskData.driverPoints, MSpace::kWorld);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  unsigned int numDriverPoints = taskData.driverPoints.length();
+  // Get the driver normals
+  taskData.driverNormals.setLength(numDriverPoints);
+  fnDriver.getVertexNormals(false, taskData.driverNormals, MSpace::kWorld);
+  return MS::kSuccess;
+}
+
+
+
 CVWrap::CVWrap() {
   MThreadPool::init();
 }
@@ -147,7 +263,7 @@ MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& loca
   // Only pull bind information from the data block if it is dirty
   if (dirty_[geomIndex] || taskData.sampleIds.size() == 0) {
     dirty_[geomIndex] = false;
-    status = GetBindInfo(data, geomIndex);
+    status = GetBindInfo(data, geomIndex, taskData);
     if (status == MS::kNotImplemented) {
       // If no bind information is stored yet, don't do anything.
       return MS::kSuccess;
@@ -215,93 +331,6 @@ MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& loca
 }
 
 
-MStatus CVWrap::GetBindInfo(MDataBlock& data, unsigned int geomIndex) {
-  MStatus status;
-  MArrayDataHandle hBindDataArray = data.inputArrayValue(aBindData);
-  status = hBindDataArray.jumpToElement(geomIndex);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
-  MDataHandle hBindData = hBindDataArray.inputValue();
-
-  MArrayDataHandle hSampleWeights = hBindData.child(aSampleWeights);
-  unsigned int numVerts = hSampleWeights.elementCount();
-  if (numVerts == 0) {
-    // No binding information yet.
-    return MS::kNotImplemented;
-  }
-  MArrayDataHandle hComponents = hBindData.child(aSampleComponents);
-  MArrayDataHandle hBindMatrix = hBindData.child(aBindMatrix);
-  MArrayDataHandle hTriangleVerts = hBindData.child(aTriangleVerts);
-  MArrayDataHandle hBarycentricWeights = hBindData.child(aBarycentricWeights);
-
-  hSampleWeights.jumpToArrayElement(0);
-  hComponents.jumpToArrayElement(0);
-  hBindMatrix.jumpToArrayElement(0);
-  hTriangleVerts.jumpToArrayElement(0);
-  hBarycentricWeights.jumpToArrayElement(0);
-
-  MFnNumericData fnNumericData;
-  TaskData& taskData = taskData_[geomIndex];
-  taskData.bindMatrices.setLength(numVerts);
-  taskData.sampleIds.resize(numVerts);
-  taskData.sampleWeights.resize(numVerts);
-  taskData.triangleVerts.resize(numVerts);
-  taskData.baryCoords.resize(numVerts);
-
-  int sampleLength = (int)taskData.bindMatrices.length();
-  for (unsigned int i = 0; i < numVerts; ++i) {
-    int logicalIndex = hComponents.elementIndex();
-    if (logicalIndex >= sampleLength) {
-      // Nurbs surfaces may be sparse so make sure we have enough space.
-      taskData.bindMatrices.setLength(logicalIndex+1);
-      taskData.sampleIds.resize(logicalIndex+1);
-      taskData.sampleWeights.resize(logicalIndex+1);
-      taskData.triangleVerts.resize(logicalIndex+1);
-      taskData.baryCoords.resize(logicalIndex+1);
-    }
-
-    // Get sample ids
-    MObject oIndexData = hComponents.inputValue().data();
-    MFnIntArrayData fnIntData(oIndexData, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    taskData.sampleIds[logicalIndex] = fnIntData.array();
-
-    // Get sample weights
-    MObject oWeightData = hSampleWeights.inputValue().data();
-    MFnDoubleArrayData fnDoubleData(oWeightData, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    taskData.sampleWeights[logicalIndex] = fnDoubleData.array();
-    assert(taskData.sampleWeights[logicalIndex].length() == taskData.sampleIds[logicalIndex].length());
-    
-    // Get bind matrix
-    taskData.bindMatrices[logicalIndex] = hBindMatrix.inputValue().asMatrix();
-
-    // Get triangle vertex binding
-    int3& verts = hTriangleVerts.inputValue(&status).asInt3();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    MIntArray& triangleVerts = taskData.triangleVerts[logicalIndex];
-    triangleVerts.setLength(3);
-    triangleVerts[0] = verts[0];
-    triangleVerts[1] = verts[1];
-    triangleVerts[2] = verts[2];
-
-    // Get barycentric weights
-    float3& baryWeights = hBarycentricWeights.inputValue(&status).asFloat3();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
-    BaryCoords& coords = taskData.baryCoords[logicalIndex];
-    coords[0] = baryWeights[0];
-    coords[1] = baryWeights[1];
-    coords[2] = baryWeights[2];
-
-    hSampleWeights.next();
-    hComponents.next();
-    hBindMatrix.next();
-    hTriangleVerts.next();
-    hBarycentricWeights.next();
-  }
-  return MS::kSuccess;
-}
-
-
 void CVWrap::CreateTasks(void *data, MThreadRootTask *pRoot) {
   ThreadData<TaskData>* threadData = static_cast<ThreadData<TaskData>*>(data);
 
@@ -319,7 +348,6 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
   ThreadData<TaskData>* pThreadData = static_cast<ThreadData<TaskData>*>(pParam);
   TaskData* pData = pThreadData->pData;
   // Get the data out of the struct so it is easier to work with.
-  MMatrix& driverMatrix = pData->driverMatrix;
   MMatrix& drivenMatrix = pData->drivenMatrix;
   MMatrix& drivenInverseMatrix = pData->drivenInverseMatrix;
   float env = pThreadData->pData->envelope;
@@ -366,4 +394,291 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
   _mm_free(alignedStorage);
   return 0;
 }
+
+
+#if MAYA_API_VERSION >= 201600
+MString CVWrapGPU::pluginLoadPath;
+
+/**
+  Convenience function to copy array data to the gpu.
+*/
+cl_int EnqueueBuffer(MAutoCLMem& mclMem, size_t bufferSize, void* data) {
+  cl_int err = CL_SUCCESS;
+  if (!mclMem.get())	{
+    // The buffer doesn't exist yet so create it and copy the data over.
+		mclMem.attach(clCreateBuffer(MOpenCLInfo::getOpenCLContext(),
+                                        CL_MEM_COPY_HOST_PTR | CL_MEM_READ_ONLY,
+                                        bufferSize, data, &err));
+	}	else {
+		// The buffer already exists so just copy the data over.
+		err = clEnqueueWriteBuffer(MOpenCLInfo::getOpenCLCommandQueue(),
+                               mclMem.get(), CL_TRUE, 0, bufferSize,
+                               data, 0, NULL, NULL);
+	}
+  return err;
+}
+
+MGPUDeformerRegistrationInfo* CVWrapGPU::GetGPUDeformerInfo() {
+  static CVWrapGPUDeformerInfo wrapInfo;
+  return &wrapInfo;
+}
+
+CVWrapGPU::CVWrapGPU() {
+  // Remember the ctor must be fast.  No heavy work should be done here.
+  // Maya may allocate one of these and then never use it.
+}
+
+CVWrapGPU::~CVWrapGPU() {
+  terminate();
+}
+
+
+bool CVWrapGPU::ValidateNode(MDataBlock& block, const MEvaluationNode& evaluationNode,
+                             const MPlug& plug, MStringArray* messages) {
+  std::cerr << "CVWrapGPU::ValidateNode\n";
+  return true;
+}
+
+MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
+                                                   const MEvaluationNode& evaluationNode,
+                                                   const MPlug& plug,
+                                                   unsigned int numElements,
+                                                   const MAutoCLMem inputBuffer,
+                                                   const MAutoCLEvent inputEvent,
+                                                   MAutoCLMem outputBuffer,
+                                                   MAutoCLEvent& outputEvent) {
+  // evaluate has two main pieces of work.  I need to transfer any data I care about onto the GPU, and I need to run my OpenCL Kernel.
+  // First, transfer the data.  offset has two pieces of data I need to transfer to the GPU, the weight array and the offset matrix.
+  // I don't need to transfer down the input position buffer, that is already handled by the deformer evaluator, the points are in inputBuffer.
+  numElements_ = numElements;
+  EnqueueBindData(block, evaluationNode, plug);
+  EnqueueDriverData(block, evaluationNode, plug);
+  EnqueuePaintMapData(block, evaluationNode, numElements, plug);
+
+  // Now that all the data we care about is on the GPU, setup and run the OpenCL Kernel
+  if (!kernel_.get())  {
+    // Load the OpenCL kernel if we haven't yet.
+    MString openCLKernelFile(pluginLoadPath);
+    openCLKernelFile += "/cvwrap.cl";
+    kernel_ = MOpenCLInfo::getOpenCLKernel(openCLKernelFile, CVWrap::kName);
+  }
+
+  cl_int err = CL_SUCCESS;
+  
+  // Set all of our kernel parameters.  Input buffer and output buffer may be changing every frame
+  // so always set them.
+  unsigned int parameterId = 0;
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)outputBuffer.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)inputBuffer.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)fCLWeights.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)fOffsetMatrix.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_uint), (void*)&fNumElements);
+  MOpenCLInfo::checkCLErrorStatus(err);
+
+  // Figure out a good work group size for our kernel.
+  size_t workGroupSize;
+  size_t retSize;
+  err = clGetKernelWorkGroupInfo(
+    kernel_.get(),
+    MOpenCLInfo::getOpenCLDeviceId(),
+    CL_KERNEL_WORK_GROUP_SIZE,
+    sizeof(size_t),
+    &workGroupSize,
+    &retSize);
+  MOpenCLInfo::checkCLErrorStatus(err);
+
+  size_t localWorkSize = 256;
+  if (retSize > 0) localWorkSize = workGroupSize;
+  size_t globalWorkSize = (localWorkSize - fNumElements % localWorkSize) + fNumElements; // global work size must be a multiple of localWorkSize
+
+  // set up our input events.  The input event could be NULL, in that case we need to pass
+  // slightly different parameters into clEnqueueNDRangeKernel
+  unsigned int numInputEvents = 0;
+  if (inputEvent.get())
+  {
+    numInputEvents = 1;
+  }
+
+  // run the kernel
+  err = clEnqueueNDRangeKernel(
+    MOpenCLInfo::getOpenCLCommandQueue(),
+    kernel_.get(),
+    1,
+    NULL,
+    &globalWorkSize,
+    &localWorkSize,
+    numInputEvents,
+    numInputEvents ? inputEvent.getReadOnlyRef() : 0,
+    outputEvent.getReferenceForAssignment() );
+  MOpenCLInfo::checkCLErrorStatus(err);
+
+  return MPxGPUDeformer::kDeformerSuccess;
+}
+
+MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& evaluationNode,
+                                   const MPlug& plug) {
+  MStatus status;
+	if ((bindMatrices_.get() && (
+        !evaluationNode.dirtyPlugExists(CVWrap::aBindData, &status) &&
+        !evaluationNode.dirtyPlugExists(CVWrap::aSampleVerts, &status) &&
+        !evaluationNode.dirtyPlugExists(CVWrap::aSampleComponents, &status) &&
+        !evaluationNode.dirtyPlugExists(CVWrap::aSampleWeights, &status) &&
+        !evaluationNode.dirtyPlugExists(CVWrap::aSampleVerts, &status) &&
+        !evaluationNode.dirtyPlugExists(CVWrap::aBarycentricWeights, &status) &&
+        !evaluationNode.dirtyPlugExists(CVWrap::aBindMatrix, &status)
+      )) || !status) {
+    // No bind data has changed, nothing to do.
+    return MS::kSuccess;
+  }
+
+  TaskData taskData;
+  unsigned int geomIndex = plug.logicalIndex();
+  status = GetBindInfo(data, geomIndex, taskData);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+
+  // Flatten out bind matrices to float array
+  size_t arraySize = taskData.bindMatrices.length() * 16;
+	float* bindMatrices = new float[arraySize];
+  for(unsigned int i = 0, idx = 0; i < taskData.bindMatrices.length(); ++i) {
+    for(unsigned int row = 0; row<4; row++)	{
+		  for(unsigned int column = 0; column<4; column++) {
+			  bindMatrices[idx++] = (float)taskData.bindMatrices[i](row, column);
+      }
+		}
+	}
+  cl_int err = EnqueueBuffer(bindMatrices_, arraySize * sizeof(float), (void*)bindMatrices);
+  delete [] bindMatrices;
+
+  // Store samples per vertex
+  arraySize = taskData.sampleIds.size();
+  int* samplesPerVertex = new int[arraySize];
+  int totalSamples = 0;
+  for(size_t i = 0; i < taskData.sampleIds.size(); ++i) {
+    samplesPerVertex[i] = (int)taskData.sampleIds[i].length();
+    totalSamples += samplesPerVertex[i];
+  }
+  err = EnqueueBuffer(sampleCounts_, arraySize * sizeof(int), (void*)samplesPerVertex);
+  delete [] samplesPerVertex;
+
+  // Store sampleIds and sampleWeights
+  int* sampleIds = new int[totalSamples];
+  float* sampleWeights = new float[totalSamples];
+  int iter = 0;
+  for(size_t i = 0; i < taskData.sampleIds.size(); ++i) {
+    for(unsigned int j = 0; j < taskData.sampleIds[i].length(); ++j) {
+      sampleIds[iter] = taskData.sampleIds[i][j];
+      sampleWeights[iter] = (float)taskData.sampleWeights[i][j];
+      iter++;
+    }
+  }
+  err = EnqueueBuffer(sampleIds_, totalSamples * sizeof(int), (void*)sampleIds);
+  err = EnqueueBuffer(sampleWeights_, totalSamples * sizeof(float), (void*)sampleWeights);
+  delete [] sampleIds;
+  delete [] sampleWeights;
+
+  // Store triangle verts and bary coords
+  arraySize = taskData.triangleVerts.size() * 3;
+  int* triangleVerts = new int[arraySize];
+  float* baryCoords = new float[arraySize];
+  iter = 0;
+  for(size_t i = 0; i < taskData.triangleVerts.size(); ++i) {
+    for(unsigned int j = 0; j < 3; ++j) {
+      triangleVerts[iter] = taskData.triangleVerts[i][j];
+      baryCoords[iter] = (float)taskData.baryCoords[i][j];
+      iter++;
+    }
+  }
+  err = EnqueueBuffer(triangleVerts_, arraySize * sizeof(int), (void*)triangleVerts);
+  err = EnqueueBuffer(baryCoords_, arraySize * sizeof(float), (void*)baryCoords);
+  delete [] triangleVerts;
+  delete [] baryCoords;
+
+}
+
+
+MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode& evaluationNode, const MPlug& plug) {
+  MStatus status;
+  TaskData taskData;
+  status = GetDriverData(data, taskData);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  cl_int err = CL_SUCCESS;
+  // Store world space driver points and normals into float arrays.
+  // Reuse the same array for points and normals so we're not dynamically allocating double
+  // the memory.
+  unsigned int pointCount = taskData.driverPoints.length();
+  float* driverData = new float[pointCount * 3];
+
+  // Store the driver points on the gpu.
+  for (unsigned int i = 0, iter = 0; i < pointCount; ++i) {
+    driverData[iter++] = (float)taskData.driverPoints[i].x;
+    driverData[iter++] = (float)taskData.driverPoints[i].y;
+    driverData[iter++] = (float)taskData.driverPoints[i].z;
+  }
+  err = EnqueueBuffer(driverPoints_, pointCount * 3 * sizeof(float), (void*)driverData);
+
+  // Store the driver normals on the gpu.
+  for (unsigned int i = 0, iter = 0; i < pointCount; ++i) {
+    driverData[iter++] = taskData.driverNormals[i].x;
+    driverData[iter++] = taskData.driverNormals[i].y;
+    driverData[iter++] = taskData.driverNormals[i].z;
+  }
+  err = EnqueueBuffer(driverNormals_, pointCount * 3 * sizeof(float), (void*)driverData);
+	delete [] driverData;
+  return MS::kSuccess;
+}
+
+
+MStatus CVWrapGPU::EnqueuePaintMapData(MDataBlock& data,
+                                       const MEvaluationNode& evaluationNode,
+                                       unsigned int numElements,
+                                       const MPlug& plug) {
+  MStatus status;
+  if ((paintWeights_.get() &&
+       !evaluationNode.dirtyPlugExists(MPxDeformerNode::weightList, &status)) || !status) {
+    // The paint weights are not dirty so no need to get them.
+		return MS::kSuccess;
+	}
+
+  cl_int err = CL_SUCCESS;
+
+  // Store the paint weights on the gpu.
+  // Since we can't call MPxDeformerNode::weightValue, get the paint weights from the data block.
+  float* paintWeights = new float[numElements];
+  MArrayDataHandle weightList = data.outputArrayValue(MPxDeformerNode::weightList, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  unsigned int geomIndex = plug.logicalIndex();
+  status = weightList.jumpToElement(geomIndex);
+  // it is possible that the jumpToElement fails.  In that case all weights are 1.
+  if (!status) {  
+    for(unsigned int i = 0; i < numElements; i++) {
+      paintWeights[i] = 1.0f;
+    }
+  } else {
+    // Initialize all weights to 0.0f
+    for(unsigned int i = 0; i < numElements; i++) {
+      paintWeights[i] = 0.0f;
+    }
+    MDataHandle weightsStructure = weightList.inputValue(&status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    MArrayDataHandle weights = weightsStructure.child(MPxDeformerNode::weights);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    // Gather all the non-zero weights
+    unsigned int numWeights = weights.elementCount(&status);
+    CHECK_MSTATUS_AND_RETURN_IT(status);
+    for (unsigned int i = 0; i < numWeights; i++, weights.next()) {
+      unsigned int weightsElementIndex = weights.elementIndex(&status);
+      MDataHandle value = weights.inputValue(&status);
+      // BUG: The weightsElementIndex may be sparse for nurbs surfaces so this would be incorrect
+      paintWeights[weightsElementIndex] = value.asFloat();
+    }
+  }
+  err = EnqueueBuffer(paintWeights_, numElements * sizeof(float), (void*)paintWeights);
+  delete [] paintWeights;
+  return MS::kSuccess;
+}
+#endif
 

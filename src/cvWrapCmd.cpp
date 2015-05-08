@@ -3,8 +3,13 @@
 #include "bindingexporter.h"
 
 #include <maya/MArgDatabase.h>
+#include <maya/MFnDoubleArrayData.h>
+#include <maya/MFnIntArrayData.h>
 #include <maya/MFnMatrixData.h>
+#include <maya/MFnMesh.h>
+#include <maya/MGlobal.h>
 #include <maya/MItDependencyGraph.h>
+#include <maya/MItGeometry.h>
 #include <maya/MItSelectionList.h>
 #include <maya/MMeshIntersector.h>
 #include <maya/MFnSingleIndexedComponent.h>

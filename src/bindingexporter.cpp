@@ -1,6 +1,10 @@
 #include "bindingexporter.h"
 #include "cvWrapDeformer.h"
 
+#include <maya/MGlobal.h>
+#include <maya/MObjectArray.h>
+#include <maya/MFnDoubleArrayData.h>
+#include <maya/MFnIntArrayData.h>
 #include <maya/MFnMatrixData.h>
 #include <maya/MFnWeightGeometryFilter.h>
 

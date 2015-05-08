@@ -1,34 +1,20 @@
 #ifndef CVWRAPDEFORMER_H
 #define CVWRAPDEFORMER_H
 
-#include <maya/MArrayDataHandle.h>
-#include <maya/MDataBlock.h>
-#include <maya/MDataHandle.h>
-#include <maya/MDoubleArray.h>
 #include <maya/MFloatArray.h>
-#include <maya/MFloatVectorArray.h>
-#include <maya/MFnData.h>
-#include <maya/MFnDoubleArrayData.h>
-#include <maya/MFnIntArrayData.h>
-#include <maya/MFnMesh.h>
-#include <maya/MGlobal.h>
 #include <maya/MIntArray.h>
 #include <maya/MMatrix.h> 
 #include <maya/MMatrixArray.h> 
-#include <maya/MPlug.h> 
 #include <maya/MPoint.h> 
-#include <maya/MPointArray.h> 
 #include <maya/MThreadPool.h>
-#include <maya/MTransformationMatrix.h>
-#include <maya/MTypeId.h> 
-#include <maya/MVector.h>
-#include <maya/MVectorArray.h>
-
-#include <maya/MItGeometry.h>
-#include <maya/MItMeshVertex.h>
-
 #include <maya/MPxDeformerNode.h>
 
+#if MAYA_API_VERSION >= 201600
+#include <maya/MPxGPUDeformer.h>
+#include <maya/MGPUDeformerRegistry.h>
+#include <maya/MOpenCLInfo.h>
+#include <clew/clew_cl.h>
+#endif
 
 #include <map>
 #include <vector>
@@ -63,8 +49,6 @@ class CVWrap : public MPxDeformerNode {
                          unsigned int mIndex);
   virtual MStatus setDependentsDirty(const MPlug& plugBeingDirtied, MPlugArray& affectedPlugs);
 
-  MStatus GetBindInfo(MDataBlock& data, unsigned int geomIndex);
-
   static void* creator();
   static MStatus initialize();
 
@@ -82,8 +66,6 @@ class CVWrap : public MPxDeformerNode {
   static MObject aDriverGeo;
   static MObject aBindData;
   static MObject aSampleVerts;
-  static MObject aRadius;
-  static MObject aBindInfo;
   static MObject aSampleComponents;
   static MObject aSampleWeights;
     /** The vertex indices of the triangle containing the origin of each coordinate system. */
@@ -102,5 +84,73 @@ private:
   std::vector<ThreadData<TaskData>*> threadData_;
 
 };
+
+
+
+#if MAYA_API_VERSION >= 201600
+// the GPU override implementation of the offsetNode
+// 
+
+class CVWrapGPU : public MPxGPUDeformer {
+ public:
+	// Virtual methods from MPxGPUDeformer
+	CVWrapGPU();
+	virtual ~CVWrapGPU();
+
+	
+	virtual MPxGPUDeformer::DeformerStatus evaluate(MDataBlock& block, const MEvaluationNode&,
+                                                  const MPlug& plug, unsigned int numElements,
+                                                  const MAutoCLMem, const MAutoCLEvent,
+                                                  MAutoCLMem, MAutoCLEvent&);
+	virtual void terminate();
+
+	static MGPUDeformerRegistrationInfo* GetGPUDeformerInfo();
+	static bool ValidateNode(MDataBlock& block, const MEvaluationNode&, const MPlug& plug, MStringArray* messages);
+  /**< The path of where the plug-in is loaded from.  Used to find the cl kernel. */
+  static MString pluginLoadPath;
+
+private:
+	// helper methods
+	MStatus EnqueueBindData(MDataBlock& data, const MEvaluationNode& evaluationNode, const MPlug& plug);
+	MStatus EnqueueDriverData(MDataBlock& data, const MEvaluationNode& evaluationNode, const MPlug& plug);
+	MStatus EnqueuePaintMapData(MDataBlock& data, const MEvaluationNode& evaluationNode, unsigned int numElements, const MPlug& plug);
+
+	// Storage for data on the GPU
+	MAutoCLMem driverPoints_;
+	MAutoCLMem driverNormals_;
+	MAutoCLMem paintWeights_;
+	MAutoCLMem bindMatrices_;
+	MAutoCLMem sampleCounts_;
+	MAutoCLMem sampleIds_;
+	MAutoCLMem sampleWeights_;
+	MAutoCLMem triangleVerts_;
+	MAutoCLMem baryCoords_;
+
+	unsigned int numElements_;
+
+	// Kernel
+	MAutoCLKernel kernel_;
+};
+
+
+/**
+  The 
+*/
+class CVWrapGPUDeformerInfo : public MGPUDeformerRegistrationInfo {
+ public:
+	CVWrapGPUDeformerInfo(){}
+	virtual ~CVWrapGPUDeformerInfo(){}
+
+	virtual MPxGPUDeformer* createGPUDeformer()	{
+		return new CVWrapGPU();
+	}
+	
+	virtual bool validateNode(MDataBlock& block, const MEvaluationNode& evaluationNode,
+                            const MPlug& plug, MStringArray* messages) {
+		return CVWrapGPU::ValidateNode(block, evaluationNode, plug, messages);
+	}
+};
+
+#endif // End Maya 2016
 
 #endif

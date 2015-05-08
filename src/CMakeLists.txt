@@ -21,4 +21,5 @@ target_link_libraries(${PROJECT_NAME} ${MAYA_LIBRARIES})
 
 MAYA_PLUGIN(${PROJECT_NAME})
 install(TARGETS ${PROJECT_NAME} ${MAYA_TARGET_TYPE} DESTINATION plug-ins)
+install(FILES "cvwrap.cl" DESTINATION plug-ins)
 
