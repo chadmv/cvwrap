@@ -121,6 +121,7 @@ private:
 	MAutoCLMem paintWeights_;
 	MAutoCLMem bindMatrices_;
 	MAutoCLMem sampleCounts_;
+	MAutoCLMem sampleOffsets_;
 	MAutoCLMem sampleIds_;
 	MAutoCLMem sampleWeights_;
 	MAutoCLMem triangleVerts_;

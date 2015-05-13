@@ -249,6 +249,7 @@ MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& loca
     taskData_.resize(geomIndex+1);
   }
   TaskData& taskData = taskData_[geomIndex];
+  std::cerr << "deform\n";
   
   // Get driver geo
   MDataHandle hDriverGeo = data.inputValue(aDriverGeo, &status);
@@ -380,13 +381,12 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
 
     MPoint origin;
     MVector normal, up;
-    CalculateBasisComponents(sampleWeights[index], baryCoords[index], triangleVerts[i],
+    CalculateBasisComponents(sampleWeights[index], baryCoords[index], triangleVerts[index],
                              driverPoints, driverNormals, sampleIds[index], alignedStorage,
                              origin, up, normal);
 
     CreateMatrix(origin, normal, up, matrix);
     matrix = scaleMatrix * matrix;
-    MPoint dpt = points[i];
     MMatrix tempMatrix = bindMatrices[index] * matrix;
     MPoint newPt = ((points[i]  * drivenMatrix) * (bindMatrices[index] * matrix)) * drivenInverseMatrix;
     points[i] = points[i] + ((newPt - points[i]) * paintWeights[i] * env);
@@ -435,7 +435,6 @@ CVWrapGPU::~CVWrapGPU() {
 
 bool CVWrapGPU::ValidateNode(MDataBlock& block, const MEvaluationNode& evaluationNode,
                              const MPlug& plug, MStringArray* messages) {
-  std::cerr << "CVWrapGPU::ValidateNode\n";
   return true;
 }
 
@@ -447,21 +446,30 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
                                                    const MAutoCLEvent inputEvent,
                                                    MAutoCLMem outputBuffer,
                                                    MAutoCLEvent& outputEvent) {
+  MStatus status;
   // evaluate has two main pieces of work.  I need to transfer any data I care about onto the GPU, and I need to run my OpenCL Kernel.
   // First, transfer the data.  offset has two pieces of data I need to transfer to the GPU, the weight array and the offset matrix.
   // I don't need to transfer down the input position buffer, that is already handled by the deformer evaluator, the points are in inputBuffer.
   numElements_ = numElements;
-  EnqueueBindData(block, evaluationNode, plug);
-  EnqueueDriverData(block, evaluationNode, plug);
-  EnqueuePaintMapData(block, evaluationNode, numElements, plug);
+  status = EnqueueBindData(block, evaluationNode, plug);
+  CHECK_MSTATUS(status);
+  status = EnqueueDriverData(block, evaluationNode, plug);
+  CHECK_MSTATUS(status);
+  status = EnqueuePaintMapData(block, evaluationNode, numElements, plug);
+  CHECK_MSTATUS(status);
 
   // Now that all the data we care about is on the GPU, setup and run the OpenCL Kernel
   if (!kernel_.get())  {
     // Load the OpenCL kernel if we haven't yet.
     MString openCLKernelFile(pluginLoadPath);
     openCLKernelFile += "/cvwrap.cl";
-    kernel_ = MOpenCLInfo::getOpenCLKernel(openCLKernelFile, CVWrap::kName);
+    kernel_ = MOpenCLInfo::getOpenCLKernel(openCLKernelFile, "cvwrap");
+    if (kernel_.isNull())  {
+      std::cerr << "Could not compile kernel " << openCLKernelFile << "\n";
+      return MPxGPUDeformer::kDeformerFailure;
+    }
   }
+  std::cerr << "Evaluate\n";
 
   cl_int err = CL_SUCCESS;
   
@@ -472,11 +480,27 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
   MOpenCLInfo::checkCLErrorStatus(err);
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)inputBuffer.getReadOnlyRef());
   MOpenCLInfo::checkCLErrorStatus(err);
-  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)fCLWeights.getReadOnlyRef());
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)driverPoints_.getReadOnlyRef());
   MOpenCLInfo::checkCLErrorStatus(err);
-  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)fOffsetMatrix.getReadOnlyRef());
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)driverNormals_.getReadOnlyRef());
   MOpenCLInfo::checkCLErrorStatus(err);
-  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_uint), (void*)&fNumElements);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)paintWeights_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)sampleCounts_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)sampleOffsets_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)sampleIds_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)sampleWeights_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)triangleVerts_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)baryCoords_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)bindMatrices_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_uint), (void*)&numElements_);
   MOpenCLInfo::checkCLErrorStatus(err);
 
   // Figure out a good work group size for our kernel.
@@ -492,14 +516,16 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
   MOpenCLInfo::checkCLErrorStatus(err);
 
   size_t localWorkSize = 256;
-  if (retSize > 0) localWorkSize = workGroupSize;
-  size_t globalWorkSize = (localWorkSize - fNumElements % localWorkSize) + fNumElements; // global work size must be a multiple of localWorkSize
+  if (retSize > 0) {
+    localWorkSize = workGroupSize;
+  }
+  // global work size must be a multiple of localWorkSize
+  size_t globalWorkSize = (localWorkSize - numElements_ % localWorkSize) + numElements_;
 
   // set up our input events.  The input event could be NULL, in that case we need to pass
   // slightly different parameters into clEnqueueNDRangeKernel
   unsigned int numInputEvents = 0;
-  if (inputEvent.get())
-  {
+  if (inputEvent.get()) {
     numInputEvents = 1;
   }
 
@@ -556,13 +582,17 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
   // Store samples per vertex
   arraySize = taskData.sampleIds.size();
   int* samplesPerVertex = new int[arraySize];
+  int* sampleOffsets = new int[arraySize];
   int totalSamples = 0;
   for(size_t i = 0; i < taskData.sampleIds.size(); ++i) {
     samplesPerVertex[i] = (int)taskData.sampleIds[i].length();
     totalSamples += samplesPerVertex[i];
+    sampleOffsets[i] = totalSamples;
   }
   err = EnqueueBuffer(sampleCounts_, arraySize * sizeof(int), (void*)samplesPerVertex);
+  err = EnqueueBuffer(sampleOffsets_, arraySize * sizeof(int), (void*)sampleOffsets);
   delete [] samplesPerVertex;
+  delete [] sampleOffsets;
 
   // Store sampleIds and sampleWeights
   int* sampleIds = new int[totalSamples];
@@ -596,7 +626,7 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
   err = EnqueueBuffer(baryCoords_, arraySize * sizeof(float), (void*)baryCoords);
   delete [] triangleVerts;
   delete [] baryCoords;
-
+  return MS::kSuccess;
 }
 
 
@@ -680,5 +710,21 @@ MStatus CVWrapGPU::EnqueuePaintMapData(MDataBlock& data,
   delete [] paintWeights;
   return MS::kSuccess;
 }
+
+
+void CVWrapGPU::terminate() {
+  driverPoints_.reset();
+  driverNormals_.reset();
+  paintWeights_.reset();
+  bindMatrices_.reset();
+  sampleCounts_.reset();
+  sampleIds_.reset();
+  sampleWeights_.reset();
+  triangleVerts_.reset();
+  baryCoords_.reset();
+	MOpenCLInfo::releaseOpenCLKernel(kernel_);
+	kernel_.reset();
+}
+
 #endif
 

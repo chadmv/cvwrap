@@ -10,8 +10,9 @@ set(SOURCE_FILES
     #"cvWrapRebindCmd.h"
     "common.cpp"
     "common.h"
+    "cvwrap.cl"
 )
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX")
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MAYA_CXX_FLAGS} /arch:AVX")
 find_package(Maya REQUIRED)
 
 include_directories(${MAYA_INCLUDE_DIR})
