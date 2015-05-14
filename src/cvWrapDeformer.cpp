@@ -249,7 +249,6 @@ MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& loca
     taskData_.resize(geomIndex+1);
   }
   TaskData& taskData = taskData_[geomIndex];
-  std::cerr << "deform\n";
   
   // Get driver geo
   MDataHandle hDriverGeo = data.inputValue(aDriverGeo, &status);
@@ -387,7 +386,6 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
 
     CreateMatrix(origin, normal, up, matrix);
     matrix = scaleMatrix * matrix;
-    MMatrix tempMatrix = bindMatrices[index] * matrix;
     MPoint newPt = ((points[i]  * drivenMatrix) * (bindMatrices[index] * matrix)) * drivenInverseMatrix;
     points[i] = points[i] + ((newPt - points[i]) * paintWeights[i] * env);
   }
@@ -469,7 +467,6 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
       return MPxGPUDeformer::kDeformerFailure;
     }
   }
-  std::cerr << "Evaluate\n";
 
   cl_int err = CL_SUCCESS;
   
@@ -570,8 +567,8 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
   size_t arraySize = taskData.bindMatrices.length() * 16;
 	float* bindMatrices = new float[arraySize];
   for(unsigned int i = 0, idx = 0; i < taskData.bindMatrices.length(); ++i) {
-    for(unsigned int row = 0; row<4; row++)	{
-		  for(unsigned int column = 0; column<4; column++) {
+    for(unsigned int row = 0; row < 4; row++) {
+		  for(unsigned int column = 0; column < 4; column++) {
 			  bindMatrices[idx++] = (float)taskData.bindMatrices[i](row, column);
       }
 		}
@@ -586,8 +583,8 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
   int totalSamples = 0;
   for(size_t i = 0; i < taskData.sampleIds.size(); ++i) {
     samplesPerVertex[i] = (int)taskData.sampleIds[i].length();
-    totalSamples += samplesPerVertex[i];
     sampleOffsets[i] = totalSamples;
+    totalSamples += samplesPerVertex[i];
   }
   err = EnqueueBuffer(sampleCounts_, arraySize * sizeof(int), (void*)samplesPerVertex);
   err = EnqueueBuffer(sampleOffsets_, arraySize * sizeof(int), (void*)sampleOffsets);
