@@ -9,3 +9,4 @@ add_subdirectory(src)
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/module.txt" "${PROJECT_PATH}/${PROJECT_NAME}.txt")
 
+install(DIRECTORY scripts DESTINATION .)

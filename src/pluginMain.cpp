@@ -2,6 +2,7 @@
 #include "cvWrapCmd.h"
 
 #include <maya/MFnPlugin.h>
+#include <maya/MGlobal.h>
 
 MStatus initializePlugin(MObject obj) { 
   MStatus status;
@@ -19,6 +20,12 @@ MStatus initializePlugin(MObject obj) {
   CVWrapGPU::pluginLoadPath = plugin.loadPath();
 #endif
 
+
+  if (MGlobal::mayaState() == MGlobal::kInteractive) {
+    MGlobal::executePythonCommandOnIdle("import cvwrap.menu");
+		MGlobal::executePythonCommandOnIdle("cvwrap.menu.create_menuitems()");
+  }
+
   return status;
 }
 
@@ -34,6 +41,11 @@ MStatus uninitializePlugin( MObject obj) {
   CHECK_MSTATUS_AND_RETURN_IT(status);
   status = plugin.deregisterNode(CVWrap::id);
   CHECK_MSTATUS_AND_RETURN_IT(status);
+
+  if (MGlobal::mayaState() == MGlobal::kInteractive) {
+    MGlobal::executePythonCommandOnIdle("import cvwrap.menu");
+		MGlobal::executePythonCommandOnIdle("cvwrap.menu.destroy_menuitems()");
+  }
   
   return status;
 }
