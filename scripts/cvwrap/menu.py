@@ -9,6 +9,8 @@ NEW_BIND_MESH_WIDGET = 'cvwrap_newbindmesh'
 BIND_FILE_WIDGET = 'cvwrap_bindfile'
 MENU_ITEMS = []
 
+import cvwrap.bindui
+
 def create_menuitems():
     global MENU_ITEMS
     if MENU_ITEMS:
@@ -31,10 +33,18 @@ def create_menuitems():
                     MENU_ITEMS.append(cvwrap_item)
                     MENU_ITEMS.append(cvwrap_options)
                 elif section == 'Edit':
-                    cvwrap_item = cmds.menuItem(label="cvWrap Binding",
-                                                command=display_binding_dialog,
-                                                sourceType='python', insertAfter=item, parent=menu)
-                    MENU_ITEMS.append(cvwrap_item)
+                    submenu = cmds.menuItem(label="cvWrap", subMenu=True, insertAfter=item,
+                                            parent=menu)
+                    MENU_ITEMS.append(submenu)
+                    item = cmds.menuItem(label="Edit Binding", command=edit_binding,
+                                         sourceType='python', parent=submenu)
+                    MENU_ITEMS.append(item)
+                    item = cmds.menuItem(label="Import Binding", command=import_binding,
+                                         sourceType='python', parent=submenu)
+                    MENU_ITEMS.append(item)
+                    item = cmds.menuItem(label="Export Binding", command=export_binding,
+                                         sourceType='python', parent=submenu)
+                    MENU_ITEMS.append(item)
 
 
 def create_cvwrap(*args, **kwargs):
@@ -156,7 +166,13 @@ def reset_to_defaults(*args, **kwargs):
     cmds.checkBoxGrp(NEW_BIND_MESH_WIDGET, e=True, v1=False)
 
 
-def display_binding_dialog(*args, **kwargs):
+def edit_binding(*args, **kwargs):
+    cvwrap.bindui.show()
+
+def export_binding(*args, **kwargs):
+    cmds.loadPlugin('cvwrap', qt=True)
+
+def import_binding(*args, **kwargs):
     cmds.loadPlugin('cvwrap', qt=True)
 
 
