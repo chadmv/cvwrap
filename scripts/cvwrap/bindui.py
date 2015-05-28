@@ -66,6 +66,7 @@ class BindingDialog(MayaQWidgetBaseMixin, QtGui.QDialog):
         label.setMaximumWidth(label_width)
         hbox.addWidget(label)
         self.sample_radius = QtGui.QDoubleSpinBox()
+        self.sample_radius.setValue(0.1)
         self.sample_radius.setRange(0, 100)
         self.sample_radius.setDecimals(2)
         self.sample_radius.setSingleStep(.1)
@@ -102,7 +103,13 @@ class BindingDialog(MayaQWidgetBaseMixin, QtGui.QDialog):
         faces = self.target_faces.text().split()
         wrap_node = self.cvwrap_combo.currentText()
         radius = self.sample_radius.value()
+        # Make sure the faces are actual faces.  If they are not, convert to faces.
+        cmds.select(faces)
+        cmds.ConvertSelectionToFaces()
+        faces = cmds.ls(sl=True)
+
         cmds.select(components)
+        cmds.ConvertSelectionToVertices()
         cmds.select(faces, add=True)
         cmds.cvWrap(rb=wrap_node, radius=radius)
         print 'Rebounded vertices'
