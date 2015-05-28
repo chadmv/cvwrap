@@ -92,7 +92,7 @@ MStatus CVWrap::initialize() {
   addAttribute(aNumTasks);
   attributeAffects(aNumTasks, outputGeom);
 
-  MGlobal::executeCommand("makePaintable -attrType multiFloat -sm deformer CVWrap weights");
+  MGlobal::executeCommand("makePaintable -attrType multiFloat -sm deformer cvWrap weights");
     
   return MS::kSuccess;
 }
