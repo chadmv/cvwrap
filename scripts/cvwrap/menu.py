@@ -2,6 +2,8 @@ import maya.cmds as cmds
 import maya.mel as mel
 import maya.OpenMayaUI as OpenMayaUI
 import os
+from PySide import QtGui
+import cvwrap.bindui
 
 NAME_WIDGET = 'cvwrap_name'
 RADIUS_WIDGET = 'cvwrap_radius'
@@ -9,7 +11,6 @@ NEW_BIND_MESH_WIDGET = 'cvwrap_newbindmesh'
 BIND_FILE_WIDGET = 'cvwrap_bindfile'
 MENU_ITEMS = []
 
-import cvwrap.bindui
 
 def create_menuitems():
     global MENU_ITEMS
@@ -51,13 +52,14 @@ def create_cvwrap(*args, **kwargs):
     cmds.loadPlugin('cvwrap', qt=True)
     sel = cmds.ls(sl=True)
     if len(sel) >= 2:
-        kwargs = get_command_kwargs()
+        kwargs = get_create_command_kwargs()
         result = cmds.cvWrap(**kwargs)
         print result
     else:
         raise RuntimeError("Select at least one surface and one influence object.")
 
-def get_command_kwargs():
+
+def get_create_command_kwargs():
     """Gets the cvWrap command arguments either from the option box widgets or the saved
     option vars.  If the widgets exist, their values will be saved to the option vars.
     @return A dictionary of the kwargs to the cvWrap command."""
@@ -133,7 +135,7 @@ def display_cvwrap_options(*args, **kwargs):
     cmds.button(close_button, e=True, command=close_option_box)
     save_button = mel.eval('getOptionBoxSaveBtn;')
     cmds.button(save_button, e=True,
-                command='python("import cvwrap.menu; cvwrap.menu.get_command_kwargs()");')
+                command='python("import cvwrap.menu; cvwrap.menu.get_create_command_kwargs()");')
     mel.eval('showOptionBox')
 
 
@@ -169,11 +171,48 @@ def reset_to_defaults(*args, **kwargs):
 def edit_binding(*args, **kwargs):
     cvwrap.bindui.show()
 
+
 def export_binding(*args, **kwargs):
+    """Export a wrap binding from the selected wrap node or mesh."""
     cmds.loadPlugin('cvwrap', qt=True)
+    wrap_node = get_wrap_node_from_selected()
+    if wrap_node:
+        data_dir = os.path.join(cmds.workspace(q=True, rd=True), 'data')
+        file_path = cmds.fileDialog2(fileFilter='*.wrap', dialogStyle=2, cap='Export Binding',
+                                     startingDirectory=data_dir, fm=0)
+        if file_path:
+            cmds.cvWrap(wrap_node, ex=file_path[0])
+
 
 def import_binding(*args, **kwargs):
+    """Import a wrap binding onto the selected wrap node or mesh."""
     cmds.loadPlugin('cvwrap', qt=True)
+    wrap_node = get_wrap_node_from_selected()
+    if wrap_node:
+        data_dir = os.path.join(cmds.workspace(q=True, rd=True), 'data')
+        file_path = cmds.fileDialog2(fileFilter='*.wrap', dialogStyle=2, cap='Import Binding',
+                                     startingDirectory=data_dir, fm=1)
+        if file_path:
+            cmds.cvWrap(wrap_node, im=file_path[0])
+
+
+def get_wrap_node_from_selected():
+    """Get a wrap node from the selected geometry."""
+    sel = cmds.ls(sl=True) or []
+    if not sel:
+        raise RuntimeError('No cvWrap found on selected.')
+    if cmds.nodeType(sel[0]) == 'cvWrap':
+        return sel[0]
+    history = cmds.listHistory(sel[0], pdo=0) or []
+    wrap_nodes = [node for node in history if cmds.nodeType(node) == 'cvWrap']
+    if not wrap_nodes:
+        raise RuntimeError('No cvWrap node found on {0}.'.format(sel[0]))
+    if len(wrap_nodes) == 1:
+        return wrap_nodes[0]
+    else:
+        # Multiple wrap nodes are deforming the mesh.  Let the user choose which one
+        # to use.
+        return QtGui.QInputDialog.getItem(None, 'Select cvWrap node', 'cvWrap node:', wrap_nodes)
 
 
 def destroy_menuitems():
