@@ -467,7 +467,8 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
       return MPxGPUDeformer::kDeformerFailure;
     }
   }
-
+  float envelope = block.inputValue(MPxDeformerNode::envelope, &status).asFloat();
+  CHECK_MSTATUS(status);
   cl_int err = CL_SUCCESS;
   
   // Set all of our kernel parameters.  Input buffer and output buffer may be changing every frame
@@ -496,6 +497,8 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)baryCoords_.getReadOnlyRef());
   MOpenCLInfo::checkCLErrorStatus(err);
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)bindMatrices_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_float), (void*)&envelope);
   MOpenCLInfo::checkCLErrorStatus(err);
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_uint), (void*)&numElements_);
   MOpenCLInfo::checkCLErrorStatus(err);
@@ -685,9 +688,9 @@ MStatus CVWrapGPU::EnqueuePaintMapData(MDataBlock& data,
       paintWeights[i] = 1.0f;
     }
   } else {
-    // Initialize all weights to 0.0f
+    // Initialize all weights to 1.0f
     for(unsigned int i = 0; i < numElements; i++) {
-      paintWeights[i] = 0.0f;
+      paintWeights[i] = 1.0f;
     }
     MDataHandle weightsStructure = weightList.inputValue(&status);
     CHECK_MSTATUS_AND_RETURN_IT(status);

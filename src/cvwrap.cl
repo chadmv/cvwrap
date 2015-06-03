@@ -14,6 +14,7 @@ __kernel void cvwrap(__global float* finalPos,
                      __global const int* triangleVerts,
                      __global const float* baryCoords,
                      __global const float4* bindMatrices,
+                     const float envelope,
                      const uint positionCount) {
   unsigned int positionId = get_global_id(0);
   if (positionId >= positionCount) {
@@ -202,7 +203,17 @@ __kernel void cvwrap(__global float* finalPos,
                                     initialPos[positionOffset+1],
                                     initialPos[positionOffset+2],
                                     1.0f);
-  finalPos[positionOffset] = dot(initialPosition, (float4)(m0.x, m1.x, m2.x, m3.x));
-  finalPos[positionOffset+1] = dot(initialPosition, (float4)(m0.y, m1.y, m2.y, m3.y));
-  finalPos[positionOffset+2] = dot(initialPosition, (float4)(m0.z, m1.z, m2.z, m3.z));
+  float3 newPt = (float3)(dot(initialPosition, (float4)(m0.x, m1.x, m2.x, m3.x)),
+                          dot(initialPosition, (float4)(m0.y, m1.y, m2.y, m3.y)),
+                          dot(initialPosition, (float4)(m0.z, m1.z, m2.z, m3.z)));
+
+  /*
+    Equivalent CPU code:
+    ====================
+    points[i] = points[i] + ((newPt - points[i]) * paintWeights[i] * env);
+  */
+  float weight = paintWeights[positionId] * envelope;
+  finalPos[positionOffset] = initialPosition.x + ((newPt.x - initialPosition.x) * weight);
+  finalPos[positionOffset+1] = initialPosition.y + ((newPt.y - initialPosition.y) * weight);
+  finalPos[positionOffset+2] = initialPosition.z + ((newPt.z - initialPosition.z) * weight);
 }
