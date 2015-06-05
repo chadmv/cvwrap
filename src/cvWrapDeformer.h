@@ -126,6 +126,7 @@ private:
 	MAutoCLMem sampleWeights_;
 	MAutoCLMem triangleVerts_;
 	MAutoCLMem baryCoords_;
+	MAutoCLMem drivenMatrices_;
 
 	unsigned int numElements_;
 

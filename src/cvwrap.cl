@@ -14,6 +14,7 @@ __kernel void cvwrap(__global float* finalPos,
                      __global const int* triangleVerts,
                      __global const float* baryCoords,
                      __global const float4* bindMatrices,
+                     __global const float4* drivenMatrices,
                      const float envelope,
                      const uint positionCount) {
   unsigned int positionId = get_global_id(0);
@@ -162,7 +163,7 @@ __kernel void cvwrap(__global float* finalPos,
   }
 
   // Create the transform matrix
-  // Store by columns so we can use dot to multiply with the bind matrix
+  // Store by columns so we can use dot to multiply with the scale matrix
   float3 x = cross(normal, up);
   float3 z = cross(normal, x);
   float4 matrix0 = (float4)(x.x, normal.x, z.x, originX);
@@ -170,43 +171,67 @@ __kernel void cvwrap(__global float* finalPos,
   float4 matrix2 = (float4)(x.z, normal.z, z.z, originZ);
   float4 matrix3 = (float4)(0.0f, 0.0f, 0.0f, 1.0f);
 
- // // TODO: scale matrix mult
+  // Scale matrix mult
+  /*
+    Equivalent CPU code:
+    ====================
+    matrix = scaleMatrix * matrix;
+  */
+  __global const float4* scaleMatrix = &(drivenMatrices[8]);
+  float4 scaleMatrix0 = (float4)(dot(scaleMatrix[0], matrix0),
+                        dot(scaleMatrix[0], matrix1),
+                        dot(scaleMatrix[0], matrix2),
+                        dot(scaleMatrix[0], matrix3));
+  float4 scaleMatrix1 = (float4)(dot(scaleMatrix[1], matrix0),
+                        dot(scaleMatrix[1], matrix1),
+                        dot(scaleMatrix[1], matrix2),
+                        dot(scaleMatrix[1], matrix3));
+  float4 scaleMatrix2 = (float4)(dot(scaleMatrix[2], matrix0),
+                        dot(scaleMatrix[2], matrix1),
+                        dot(scaleMatrix[2], matrix2),
+                        dot(scaleMatrix[2], matrix3));
+  float4 scaleMatrix3 = (float4)(dot(scaleMatrix[3], matrix0),
+                        dot(scaleMatrix[3], matrix1),
+                        dot(scaleMatrix[3], matrix2),
+                        dot(scaleMatrix[3], matrix3));
+  // Transpose so we can dot with bindMatrices
+  float4 smX = (float4)(scaleMatrix0.x, scaleMatrix1.x, scaleMatrix2.x, scaleMatrix3.x);
+  float4 smY = (float4)(scaleMatrix0.y, scaleMatrix1.y, scaleMatrix2.y, scaleMatrix3.y);
+  float4 smZ = (float4)(scaleMatrix0.z, scaleMatrix1.z, scaleMatrix2.z, scaleMatrix3.z);
+  float4 smW = (float4)(scaleMatrix0.w, scaleMatrix1.w, scaleMatrix2.w, scaleMatrix3.w);
 
   // Multiply bindMatrix with matrix
   /*
     Equivalent CPU code:
     ====================
-    MPoint newPt = (points[i] * (bindMatrices[index] * matrix));
+    MPoint newPt = ((points[i]  * drivenMatrix) * (bindMatrices[index] * matrix)) * drivenInverseMatrix;
   */
-  float4 bindMatrix0 = bindMatrices[positionId*4];
-  float4 bindMatrix1 = bindMatrices[positionId*4+1];
-  float4 bindMatrix2 = bindMatrices[positionId*4+2];
-  float4 bindMatrix3 = bindMatrices[positionId*4+3];
-  float4 m0 = (float4)(dot(bindMatrix0, matrix0),
-                       dot(bindMatrix0, matrix1),
-                       dot(bindMatrix0, matrix2),
-                       dot(bindMatrix0, matrix3));
-  float4 m1 = (float4)(dot(bindMatrix1, matrix0),
-                       dot(bindMatrix1, matrix1),
-                       dot(bindMatrix1, matrix2),
-                       dot(bindMatrix1, matrix3));
-  float4 m2 = (float4)(dot(bindMatrix2, matrix0),
-                       dot(bindMatrix2, matrix1),
-                       dot(bindMatrix2, matrix2),
-                       dot(bindMatrix2, matrix3));
-  float4 m3 = (float4)(dot(bindMatrix3, matrix0),
-                       dot(bindMatrix3, matrix1),
-                       dot(bindMatrix3, matrix2),
-                       dot(bindMatrix3, matrix3));
+  float4 bm0 = bindMatrices[positionId*4];
+  float4 bm1 = bindMatrices[positionId*4+1];
+  float4 bm2 = bindMatrices[positionId*4+2];
+  float4 bm3 = bindMatrices[positionId*4+3];
+  float4 m0 = (float4)(dot(bm0, smX), dot(bm0, smY), dot(bm0, smZ), dot(bm0, smW));
+  float4 m1 = (float4)(dot(bm1, smX), dot(bm1, smY), dot(bm1, smZ), dot(bm1, smW));
+  float4 m2 = (float4)(dot(bm2, smX), dot(bm2, smY), dot(bm2, smZ), dot(bm2, smW));
+  float4 m3 = (float4)(dot(bm3, smX), dot(bm3, smY), dot(bm3, smZ), dot(bm3, smW));
 
   float4 initialPosition = (float4)(initialPos[positionOffset],
                                     initialPos[positionOffset+1],
                                     initialPos[positionOffset+2],
                                     1.0f);
-  float3 newPt = (float3)(dot(initialPosition, (float4)(m0.x, m1.x, m2.x, m3.x)),
-                          dot(initialPosition, (float4)(m0.y, m1.y, m2.y, m3.y)),
-                          dot(initialPosition, (float4)(m0.z, m1.z, m2.z, m3.z)));
-
+  __global const float4* drivenInverseMatrix = &(drivenMatrices[4]);
+	__global const float4* drivenMatrix = drivenMatrices;
+  float4 worldPt = (float4)(dot(initialPosition, drivenMatrix[0]),
+                            dot(initialPosition, drivenMatrix[1]),
+                            dot(initialPosition, drivenMatrix[2]),
+                            dot(initialPosition, drivenMatrix[3]));
+  worldPt = (float4)(dot(worldPt, (float4)(m0.x, m1.x, m2.x, m3.x)),
+                     dot(worldPt, (float4)(m0.y, m1.y, m2.y, m3.y)),
+                     dot(worldPt, (float4)(m0.z, m1.z, m2.z, m3.z)),
+                     dot(worldPt, (float4)(m0.w, m1.w, m2.w, m3.w)));
+  float3 newPt = (float3)(dot(worldPt, drivenInverseMatrix[0]),
+                          dot(worldPt, drivenInverseMatrix[1]),
+                          dot(worldPt, drivenInverseMatrix[2]));
   /*
     Equivalent CPU code:
     ====================

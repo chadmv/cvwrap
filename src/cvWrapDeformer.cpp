@@ -445,10 +445,8 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
                                                    MAutoCLMem outputBuffer,
                                                    MAutoCLEvent& outputEvent) {
   MStatus status;
-  // evaluate has two main pieces of work.  I need to transfer any data I care about onto the GPU, and I need to run my OpenCL Kernel.
-  // First, transfer the data.  offset has two pieces of data I need to transfer to the GPU, the weight array and the offset matrix.
-  // I don't need to transfer down the input position buffer, that is already handled by the deformer evaluator, the points are in inputBuffer.
   numElements_ = numElements;
+  // Copy all necessary data to the gpu.
   status = EnqueueBindData(block, evaluationNode, plug);
   CHECK_MSTATUS(status);
   status = EnqueueDriverData(block, evaluationNode, plug);
@@ -456,7 +454,6 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
   status = EnqueuePaintMapData(block, evaluationNode, numElements, plug);
   CHECK_MSTATUS(status);
 
-  // Now that all the data we care about is on the GPU, setup and run the OpenCL Kernel
   if (!kernel_.get())  {
     // Load the OpenCL kernel if we haven't yet.
     MString openCLKernelFile(pluginLoadPath);
@@ -497,6 +494,8 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)baryCoords_.getReadOnlyRef());
   MOpenCLInfo::checkCLErrorStatus(err);
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)bindMatrices_.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)drivenMatrices_.getReadOnlyRef());
   MOpenCLInfo::checkCLErrorStatus(err);
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_float), (void*)&envelope);
   MOpenCLInfo::checkCLErrorStatus(err);
@@ -658,6 +657,43 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode& ev
   }
   err = EnqueueBuffer(driverNormals_, pointCount * 3 * sizeof(float), (void*)driverData);
 	delete [] driverData;
+
+  // Store the driven matrices on the gpu.
+  MArrayDataHandle hInputs = data.inputValue(CVWrap::input, &status);
+  unsigned int geomIndex = plug.logicalIndex();
+  status = hInputs.jumpToElement(geomIndex);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MDataHandle hInput = hInputs.inputValue(&status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MDataHandle hGeom = hInput.child(CVWrap::inputGeom);
+  MMatrix localToWorldMatrix = hGeom.geometryTransformMatrix();
+  MMatrix worldToLocalMatrix = localToWorldMatrix.inverse();
+	float drivenMatrices[48]; // 0-15: localToWorld, 16-31: worldToLocal, 32-47: scale
+  int idx = 0;
+  // Store in column order so we can dot in the cl kernel.
+  for(unsigned int column = 0; column < 4; column++) {
+    for(unsigned int row = 0; row < 4; row++) {
+			drivenMatrices[idx++] = (float)localToWorldMatrix(row, column);
+    }
+	}
+  for(unsigned int column = 0; column < 4; column++) {
+    for(unsigned int row = 0; row < 4; row++) {
+			drivenMatrices[idx++] = (float)worldToLocalMatrix(row, column);
+    }
+	}
+  // Scale matrix is stored row major
+  float scale = data.inputValue(CVWrap::aScale, &status).asFloat();
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MMatrix scaleMatrix;
+  scaleMatrix[0][0] = scale;
+  scaleMatrix[1][1] = scale;
+  scaleMatrix[2][2] = scale;
+  for(unsigned int row = 0; row < 4; row++) {
+    for(unsigned int column = 0; column < 4; column++) {
+			drivenMatrices[idx++] = (float)scaleMatrix(row, column);
+    }
+	}
+  err = EnqueueBuffer(drivenMatrices_, 48 * sizeof(float), (void*)drivenMatrices);
   return MS::kSuccess;
 }
 
@@ -722,6 +758,7 @@ void CVWrapGPU::terminate() {
   sampleWeights_.reset();
   triangleVerts_.reset();
   baryCoords_.reset();
+  drivenMatrices_.reset();
 	MOpenCLInfo::releaseOpenCLKernel(kernel_);
 	kernel_.reset();
 }
