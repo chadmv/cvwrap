@@ -24,7 +24,8 @@ def create_menuitems():
         for item in items:
             if cmds.menuItem(item, q=True, divider=True):
                 section = cmds.menuItem(item, q=True, label=True)
-            if cmds.menuItem(item, q=True, label=True) == 'Wrap':
+            menu_label = cmds.menuItem(item, q=True, label=True)
+            if menu_label == 'Wrap':
                 if section == 'Create':
                     cvwrap_item = cmds.menuItem(label="cvWrap", command=create_cvwrap,
                                                 sourceType='python', insertAfter=item, parent=menu)
@@ -45,6 +46,10 @@ def create_menuitems():
                     MENU_ITEMS.append(item)
                     item = cmds.menuItem(label="Export Binding", command=export_binding,
                                          sourceType='python', parent=submenu)
+                    MENU_ITEMS.append(item)
+            elif menu_label == 'Cluster' and section == 'Paint Weights':
+                    item = cmds.menuItem(label="cvWrap", command=paint_cvwrap_weights,
+                                         sourceType='python', insertAfter=item, parent=menu)
                     MENU_ITEMS.append(item)
 
 
@@ -222,3 +227,13 @@ def destroy_menuitems():
         cmds.deleteUI(item, menuItem=True)
     MENU_ITEMS = []
 
+
+def paint_cvwrap_weights(*args, **kwargs):
+    """Activates the paint cvWrap weights context."""
+    sel = cmds.ls(sl=True)
+    if sel:
+        wrap_nodes = [node for node in cmds.listHistory(sel[0], pdo=True)
+                     if cmds.nodeType(node) == 'cvWrap']
+        if wrap_nodes:
+            mel.eval('artSetToolAndSelectAttr("artAttrCtx", "cvWrap.{0}.weights");'.format(
+                     wrap_nodes[0]))
