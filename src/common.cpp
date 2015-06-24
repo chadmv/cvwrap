@@ -13,8 +13,6 @@
 
 //#define NO_INTRINSICS
 #define NORMALIZATION_INDEX -1
-#define MM256_SHUFFLE(fp3,fp2,fp1,fp0) (((fp3) << 3) | ((fp2) << 2) | \
-                                     ((fp1) << 1) | ((fp0)))
 
 void StartProgress(const MString& title, unsigned int count) {
   if (MGlobal::mayaState() == MGlobal::kInteractive) {
@@ -410,13 +408,13 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   up.z = alignedStorage[2];
 #endif
 
-  GetValidUpAndNormal(weights, points, sampleIds, origin, up, normal);
+  GetValidUp(weights, points, sampleIds, origin, normal, up);
 }
 
 
-void GetValidUpAndNormal(const MDoubleArray& weights, const MPointArray& points,
-                         const MIntArray& sampleIds, const MPoint& origin, MVector& up,
-                         MVector& normal) {
+void GetValidUp(const MDoubleArray& weights, const MPointArray& points,
+                const MIntArray& sampleIds, const MPoint& origin, const MVector& normal,
+                MVector& up) {
   MVector unitUp = up.normal();
   // Adjust up if it's parallel to normal or if it's zero length
   if (abs((unitUp * normal) - 1.0) < 0.001 || up.length() < 0.0001) {

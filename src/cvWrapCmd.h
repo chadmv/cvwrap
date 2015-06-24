@@ -25,7 +25,6 @@
 #include <iostream>
 #include <vector>
 #include <map>
-#include <set>
 
 #include "common.h"
 
@@ -193,7 +192,6 @@ class CVWrapCmd : public MPxCommand {
   double radius_;  /**< Binding sample radius. */
   CommandMode command_;
   MString filePath_;
-  bool m_edit;
   bool useBinding_;
   bool newBindMesh_;
   MSelectionList selectionList_;  /**< Selected command input nodes. */

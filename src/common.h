@@ -17,7 +17,6 @@
 #include <vector>
 #include <set>
 #include <xmmintrin.h>
-#include <emmintrin.h>
 #include <immintrin.h>
 
 /**
@@ -171,12 +170,12 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   @param[in] points The driver point array.
   @param[in] sampleIds The vertex ids on the driver of the current sample.
   @param[in] origin The origin of the coordinate system.
-  @param[out] up The up vector of the coordinate system.
+  @param[in] up The up vector of the coordinate system.
   @param[out] normal The normal vector of the coordinate system.
 */
-void GetValidUpAndNormal(const MDoubleArray& weights, const MPointArray& points,
-                         const MIntArray& sampleIds, const MPoint& origin, MVector& up,
-                         MVector& normal);
+void GetValidUp(const MDoubleArray& weights, const MPointArray& points,
+                const MIntArray& sampleIds, const MPoint& origin, const MVector& normal,
+                MVector& up);
 
 
 template <typename T>

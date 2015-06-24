@@ -149,7 +149,7 @@ class CVWrapGPUDeformerInfo : public MGPUDeformerRegistrationInfo {
 	
 	virtual bool validateNode(MDataBlock& block, const MEvaluationNode& evaluationNode,
                             const MPlug& plug, MStringArray* messages) {
-		return CVWrapGPU::ValidateNode(block, evaluationNode, plug, messages);
+		return true;
 	}
 };
 

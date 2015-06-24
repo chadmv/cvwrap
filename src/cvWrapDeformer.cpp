@@ -431,11 +431,6 @@ CVWrapGPU::~CVWrapGPU() {
 }
 
 
-bool CVWrapGPU::ValidateNode(MDataBlock& block, const MEvaluationNode& evaluationNode,
-                             const MPlug& plug, MStringArray* messages) {
-  return true;
-}
-
 MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
                                                    const MEvaluationNode& evaluationNode,
                                                    const MPlug& plug,
