@@ -217,7 +217,6 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
     if (distance <= maxDistance) {
       CrawlData root = {startPoint, distance, vertexIndices[i]};
       verticesToVisit.push(root);
-      distances[vertexIndices[i]] = distance;
     }
     // Track the minimum start distance in case we need to add the closest vertex below.
     // The minimum must be greater than 0 to make sure we do not use the vertex that is the
@@ -291,8 +290,10 @@ void CalculateSampleWeights(const std::map<int, double>& distances, double radiu
 
   // Make the samples a multiple of 4 so we can use fast intrinsics!
   int remainder = 4 - ((samples.size()-1) % 4);
-  for (int i = 0; i < remainder; ++i) {
-    samples.push_back(std::pair<int, double>(0, 0.0));
+  if (remainder != 4) {
+    for (int i = 0; i < remainder; ++i) {
+      samples.push_back(std::pair<int, double>(0, 0.0));
+    }
   }
 
   unsigned int length = (unsigned int)samples.size();
@@ -320,7 +321,10 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
   const MPoint& t = origin;
   const MVector& y = normal;
   MVector x = y ^ up;
-  MVector z = y ^ x;
+  MVector z = x ^ y;
+  // Renormalize vectors
+  x.normalize();
+  z.normalize();
   matrix[0][0] = x.x; matrix[0][1] = x.y; matrix[0][2] = x.z; matrix[0][3] = 0.0;
   matrix[1][0] = y.x; matrix[1][1] = y.y; matrix[1][2] = y.z; matrix[1][3] = 0.0;
   matrix[2][0] = z.x; matrix[2][1] = z.y; matrix[2][2] = z.z; matrix[2][3] = 0.0;
@@ -336,28 +340,25 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   // Start with the recreated point and normal using the barycentric coordinates of the hit point.
   unsigned int hitIndex = weights.length()-1;
 #ifdef NO_INTRINSICS
-  MPoint hitPoint;
   MVector hitNormal;
+  // Create the barycentric point and normal.
   for (int i = 0; i < 3; ++i) {
-    hitPoint += points[triangleVertices[i]] * coords[i];
+    origin += points[triangleVertices[i]] * coords[i];
     hitNormal += MVector(normals[triangleVertices[i]]) * coords[i];
   }
-  // Create the barycentric point and normal.
-  origin = hitPoint * weights[hitIndex];
+  // Use crawl data to calculate normal
   normal = hitNormal * weights[hitIndex];
-  // Then use the weighted adjacent data.
   for (unsigned int j = 0; j < hitIndex; j++) {
-    origin += MVector(points[sampleIds[j]]) * weights[j];
     normal += MVector(normals[sampleIds[j]]) * weights[j];
   }
 
   // Calculate the up vector
-  up = (hitPoint - origin) * weights[hitIndex];
-  for (unsigned int j = 0; j < hitIndex; j++) {
-    up += (points[sampleIds[j]] - origin) * weights[j];
-  }
+  // The triangle vertices are sorted by decreasing barycentric coordinates so the first two are
+  // the two closest vertices in the triangle.
+  up = ((points[triangleVertices[0]] + points[triangleVertices[1]]) * 0.5) - origin;
+
 #else
-  __m256d hitPointV = Dot4<MPoint>(coords[0], coords[1], coords[2], 0.0,
+  __m256d originV = Dot4<MPoint>(coords[0], coords[1], coords[2], 0.0,
                                 points[triangleVertices[0]], points[triangleVertices[1]],
                                 points[triangleVertices[2]], MPoint::origin);
   __m256d hitNormalV = Dot4<MVector>(coords[0], coords[1], coords[2], 0.0,
@@ -365,15 +366,9 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
                                 normals[triangleVertices[2]], MVector::zero);
   __m256d hitWeightV = _mm256_set1_pd(weights[hitIndex]);
   // Create the barycentric point and normal.
-  __m256d originV = _mm256_mul_pd(hitPointV, hitWeightV);
   __m256d normalV = _mm256_mul_pd(hitNormalV, hitWeightV);
   // Then use the weighted adjacent data.
   for (unsigned int j = 0; j < hitIndex; j += 4) {
-    __m256d tempOrigin = Dot4<MPoint>(weights[j], weights[j+1], weights[j+2], weights[j+3],
-                                      points[sampleIds[j]], points[sampleIds[j+1]],
-                                      points[sampleIds[j+2]], points[sampleIds[j+3]]);
-    originV = _mm256_add_pd(tempOrigin, originV);
-
     __m256d tempNormal = Dot4<MVector>(weights[j], weights[j+1], weights[j+2], weights[j+3],
                                        normals[sampleIds[j]], normals[sampleIds[j+1]],
                                        normals[sampleIds[j+2]], normals[sampleIds[j+3]]);
@@ -391,23 +386,20 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   normal.z = alignedStorage[2];
 
   // Calculate the up vector
-  __m256d upV = _mm256_mul_pd(_mm256_sub_pd(hitPointV, originV), hitWeightV);
-  MVector v1, v2, v3, v4;
-  for (unsigned int j = 0; j < hitIndex; j += 4) {
-    v1 = points[sampleIds[j]] - origin;
-    v2 = points[sampleIds[j+1]] - origin;
-    v3 = points[sampleIds[j+2]] - origin;
-    v4 = points[sampleIds[j+3]] - origin;
-    __m256d tempUp = Dot4<MVector>(weights[j], weights[j+1], weights[j+2], weights[j+3],
-                                   v1, v2, v3, v4);
-    upV = _mm256_add_pd(tempUp, upV);
-  }
+  const MPoint& pt1 = points[triangleVertices[0]];
+  const MPoint& pt2 = points[triangleVertices[1]];
+  __m256d p1 = _mm256_set_pd(pt1.x, pt1.y, pt1.z, pt1.w);
+  __m256d p2 = _mm256_set_pd(pt2.x, pt2.y, pt2.z, pt2.w);
+  p1 = _mm256_add_pd(p1, p2);
+  __m256d half = _mm256_set_pd(0.5, 0.5, 0.5, 0.5);
+  p1 = _mm256_mul_pd(p1, half);
+  __m256d upV = _mm256_sub_pd(p1, originV);
   _mm256_store_pd(alignedStorage, upV);
   up.x = alignedStorage[0];
   up.y = alignedStorage[1];
   up.z = alignedStorage[2];
 #endif
-
+  normal.normalize();
   GetValidUp(weights, points, sampleIds, origin, normal, up);
 }
 

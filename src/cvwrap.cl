@@ -40,15 +40,15 @@ __kernel void cvwrap(__global float* finalPos,
   int triVertA = triangleVerts[positionOffset] * 3;
   int triVertB = triangleVerts[positionOffset+1] * 3;
   int triVertC = triangleVerts[positionOffset+2] * 3;
-  float hitPointX = driverPoints[triVertA] * baryA +
-                    driverPoints[triVertB] * baryB +
-                    driverPoints[triVertC] * baryC;
-  float hitPointY = driverPoints[triVertA+1] * baryA +
-                    driverPoints[triVertB+1] * baryB +
-                    driverPoints[triVertC+1] * baryC;
-  float hitPointZ = driverPoints[triVertA+2] * baryA +
-                    driverPoints[triVertB+2] * baryB +
-                    driverPoints[triVertC+2] * baryC;
+  float originX = driverPoints[triVertA] * baryA +
+                  driverPoints[triVertB] * baryB +
+                  driverPoints[triVertC] * baryC;
+  float originY = driverPoints[triVertA+1] * baryA +
+                  driverPoints[triVertB+1] * baryB +
+                  driverPoints[triVertC+1] * baryC;
+  float originZ = driverPoints[triVertA+2] * baryA +
+                  driverPoints[triVertB+2] * baryB +
+                  driverPoints[triVertC+2] * baryC;
   float hitNormalX = driverNormals[triVertA] * baryA +
                      driverNormals[triVertB] * baryB +
                      driverNormals[triVertC] * baryC;
@@ -59,7 +59,6 @@ __kernel void cvwrap(__global float* finalPos,
                      driverNormals[triVertB+2] * baryB +
                      driverNormals[triVertC+2] * baryC;
 
-  // Create the barycentric point and normal.
   /*
     Equivalent CPU code:
     ====================
@@ -70,9 +69,6 @@ __kernel void cvwrap(__global float* finalPos,
   int offset = sampleOffsets[positionId];
   int hitIndex = offset + sampleCounts[positionId] - 1;
   float hitWeight = sampleWeights[hitIndex];
-  float originX = hitPointX * hitWeight;
-  float originY = hitPointY * hitWeight;
-  float originZ = hitPointZ * hitWeight;
   float normalX = hitNormalX * hitWeight;
   float normalY = hitNormalY * hitWeight;
   float normalZ = hitNormalZ * hitWeight;
@@ -89,10 +85,6 @@ __kernel void cvwrap(__global float* finalPos,
   for (int j = offset; j < hitIndex; j++) {
     float sw = sampleWeights[j];
     int sampleId = sampleIds[j] * 3;
-    originX += driverPoints[sampleId]   * sw;
-    originY += driverPoints[sampleId+1] * sw;
-    originZ += driverPoints[sampleId+2] * sw;
-
     normalX += driverNormals[sampleId]   * sw;
     normalY += driverNormals[sampleId+1] * sw;
     normalZ += driverNormals[sampleId+2] * sw;
@@ -102,21 +94,15 @@ __kernel void cvwrap(__global float* finalPos,
   /*
     Equivalent CPU code:
     ====================
+    up = ((points[triangleVertices[0]] + points[triangleVertices[1]]) * 0.5) - origin;
     up = (hitPoint - origin) * weights[hitIndex];
     for (unsigned int j = 0; j < hitIndex; j++) {
       up += (points[sampleIds[j]] - origin) * weights[j];
     }
   */
-  float upX = (hitPointX - originX) * hitWeight;
-  float upY = (hitPointY - originY) * hitWeight;
-  float upZ = (hitPointZ - originZ) * hitWeight;
-  for (int j = offset; j < hitIndex; j++) {
-    float sw = sampleWeights[j];
-    int sampleId = sampleIds[j] * 3;
-    upX += (driverPoints[sampleId] - originX) * sw;
-    upY += (driverPoints[sampleId+1] - originY) * sw;
-    upZ += (driverPoints[sampleId+2] - originZ) * sw;
-  }
+  float upX = ((driverPoints[triVertA] + driverPoints[triVertB]) * 0.5f) - originX;
+  float upY = ((driverPoints[triVertA+1] + driverPoints[triVertB+1]) * 0.5f) - originY;
+  float upZ = ((driverPoints[triVertA+2] + driverPoints[triVertB+2]) * 0.5f) - originZ;
 
   // Use float3 so we can use the built-in functions.  We are mostly using single floats
   // because the preferred vector width of most gpu's these days is 1.
@@ -165,7 +151,10 @@ __kernel void cvwrap(__global float* finalPos,
   // Create the transform matrix
   // Store by columns so we can use dot to multiply with the scale matrix
   float3 x = cross(normal, up);
-  float3 z = cross(normal, x);
+  float3 z = cross(x, normal);
+  x = normalize(x);
+  z = normalize(z);
+
   float4 matrix0 = (float4)(x.x, normal.x, z.x, originX);
   float4 matrix1 = (float4)(x.y, normal.y, z.y, originY);
   float4 matrix2 = (float4)(x.z, normal.z, z.z, originZ);
