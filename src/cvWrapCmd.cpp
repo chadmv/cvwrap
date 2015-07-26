@@ -15,7 +15,9 @@
 #include <maya/MFnSingleIndexedComponent.h>
 #include <maya/MFnWeightGeometryFilter.h>
 #include <maya/MSyntax.h>
+#include <algorithm>
 #include <cassert>
+#include <utility>
 
 #define PROGRESS_STEP 100
 #define TASK_COUNT 32
@@ -545,6 +547,10 @@ void CVWrapCmd::CreateTasks(void *data, MThreadRootTask *pRoot) {
   }
 }
 
+bool SortCoords(std::pair<int, float> lhs, std::pair<int, float> rhs) {
+  return (lhs.second > rhs.second); 
+}
+
 
 MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
   ThreadData<BindData>* pThreadData = static_cast<ThreadData<BindData>*>(pParam);
@@ -573,6 +579,7 @@ MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
   // Pre-allocate the aligned storage for intrinsics calculation so we are not dynamically allocating
   // memory in the loop.
   double* alignedStorage = (double*) _mm_malloc (4*sizeof(double),256);
+  std::vector<std::pair<int, float> > sortedCoords(3);
   for (unsigned int i = taskStart; i < taskEnd; ++i) {
     if (i >= inputPoints.length()) {
       break;
@@ -603,6 +610,16 @@ MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
                               driverPoints[triangleVertices[i][1]],
                               driverPoints[triangleVertices[i][2]],
                               coords[i]);
+
+    // Sort coords highest to lowest so we can easility calculate the up vector
+    for (int j = 0; j < 3; ++j) {
+      sortedCoords[j] = std::pair<int, float>(triangleVertices[i][j], coords[i][j]);
+    }
+    std::sort(sortedCoords.begin(), sortedCoords.end(), SortCoords);
+    for (int j = 0; j < 3; ++j) {
+      triangleVertices[i][j] = sortedCoords[j].first;
+      coords[i][j] = sortedCoords[j].second;
+    }
 
     // Get vertices of closest face so we can crawl out from them.
     MIntArray& vertexList = perFaceVertices[faceId];
