@@ -65,7 +65,6 @@ class CVWrap : public MPxDeformerNode {
   static MObject aBindDriverGeo;
   static MObject aDriverGeo;
   static MObject aBindData;
-  static MObject aSampleVerts;
   static MObject aSampleComponents;
   static MObject aSampleWeights;
     /** The vertex indices of the triangle containing the origin of each coordinate system. */

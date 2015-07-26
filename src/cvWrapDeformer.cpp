@@ -17,7 +17,6 @@ const char* CVWrap::kName = "cvWrap";
 MObject CVWrap::aBindDriverGeo;
 MObject CVWrap::aDriverGeo;
 MObject CVWrap::aBindData;
-MObject CVWrap::aSampleVerts;
 MObject CVWrap::aSampleComponents;
 MObject CVWrap::aSampleWeights;
 MObject CVWrap::aTriangleVerts;
@@ -544,10 +543,9 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
   MStatus status;
 	if ((bindMatrices_.get() && (
         !evaluationNode.dirtyPlugExists(CVWrap::aBindData, &status) &&
-        !evaluationNode.dirtyPlugExists(CVWrap::aSampleVerts, &status) &&
         !evaluationNode.dirtyPlugExists(CVWrap::aSampleComponents, &status) &&
         !evaluationNode.dirtyPlugExists(CVWrap::aSampleWeights, &status) &&
-        !evaluationNode.dirtyPlugExists(CVWrap::aSampleVerts, &status) &&
+        !evaluationNode.dirtyPlugExists(CVWrap::aTriangleVerts, &status) &&
         !evaluationNode.dirtyPlugExists(CVWrap::aBarycentricWeights, &status) &&
         !evaluationNode.dirtyPlugExists(CVWrap::aBindMatrix, &status)
       )) || !status) {
