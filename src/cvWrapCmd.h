@@ -184,9 +184,10 @@ class CVWrapCmd : public MPxCommand {
 
   /**
     Get the bind mesh connected to the wrap node.
+    @param[in] oWrapNode MObject to a cvWrap node..
     @param[out] pathBindMesh The path to the bind mesh.
   */
-  MStatus GetBindMesh(MDagPath& pathBindMesh);
+  MStatus GetBindMesh(MObject& oWrapNode, MDagPath& pathBindMesh);
 
 
   /**

@@ -678,20 +678,9 @@ MStatus CVWrapCmd::GetExistingBindMesh(MDagPath &pathBindMesh) {
     MObject oThisNode = geomPlugs[i].node();
     MFnDependencyNode fnNode(oThisNode);
     if (fnNode.typeId() == CVWrap::id) {
-      // Get bind wrap mesh from wrap node
-      MPlug plugBindWrapMesh = fnNode.findPlug(CVWrap::aBindDriverGeo, false, &status);
+      status = GetBindMesh(oThisNode, pathBindMesh);
       CHECK_MSTATUS_AND_RETURN_IT(status);
-      MPlugArray bindPlugs;
-      plugBindWrapMesh.connectedTo(bindPlugs, true, false);
-      if (bindPlugs.length() > 0) {
-        // If a bind mesh is connected, use it!
-        MObject oBindMesh = bindPlugs[0].node();
-        MFnDagNode fnBindDag(oBindMesh, &status);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        status = fnBindDag.getPath(pathBindMesh);
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-        return MS::kSuccess;
-      }
+      return MS::kSuccess;
     }
   }
   return MS::kSuccess;
@@ -713,7 +702,7 @@ MStatus CVWrapCmd::Rebind() {
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
   MDagPath pathBindMesh;
-  status = GetBindMesh(pathBindMesh);
+  status = GetBindMesh(oWrapNode_, pathBindMesh);
   CHECK_MSTATUS_AND_RETURN_IT(status);
 
   status = CalculateBinding(pathBindMesh, bindData, dgMod_);
@@ -728,10 +717,10 @@ MStatus CVWrapCmd::Rebind() {
 }
 
 
-MStatus CVWrapCmd::GetBindMesh(MDagPath& pathBindMesh) {
+MStatus CVWrapCmd::GetBindMesh(MObject& oWrapNode, MDagPath& pathBindMesh) {
   MStatus status;
   // Get the bind mesh connected to the message attribute of the wrap deformer
-  MPlug plugBindMesh(oWrapNode_, CVWrap::aBindDriverGeo);
+  MPlug plugBindMesh(oWrapNode, CVWrap::aBindDriverGeo);
   MPlugArray plugs;
   plugBindMesh.connectedTo(plugs, true, false, &status);
   CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -752,7 +741,7 @@ MStatus CVWrapCmd::CreateRebindSubsetMesh(MDagPath& pathDriverSubset) {
   MStatus status;
 
   MDagPath pathBindMesh;
-  status = GetBindMesh(pathBindMesh);
+  status = GetBindMesh(oWrapNode_, pathBindMesh);
   CHECK_MSTATUS_AND_RETURN_IT(status);
   MFnMesh fnBindMesh(pathBindMesh);
 
