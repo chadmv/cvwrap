@@ -69,22 +69,23 @@ MStatus GetShapeNode(MDagPath& path, bool intermediate) {
   }
 
   if (path.hasFn(MFn::kTransform)) {
-    unsigned int shapeCount;
-    status = path.numberOfShapesDirectlyBelow(shapeCount);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    unsigned int shapeCount = path.childCount();
 
     for (unsigned int i = 0; i < shapeCount; ++i) {
-      status = path.extendToShapeDirectlyBelow(i);
+      status = path.push(path.child(i));
       CHECK_MSTATUS_AND_RETURN_IT(status);
+      if (!IsShapeNode(path)) {
+        path.pop();
+        continue;
+      }
 
-      // Make sure it is not an intermediate object.
       MFnDagNode fnNode(path, &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
-      if ((!fnNode.isIntermediateObject() && !intermediate) || 
+      if ((!fnNode.isIntermediateObject() && !intermediate) ||
           (fnNode.isIntermediateObject() && intermediate)) {
         return MS::kSuccess;
       }
-      // Go to the next shape.
+      // Go to the next shape
       path.pop();
     }
   }
@@ -104,33 +105,16 @@ MStatus GetDagPath(MString& name, MDagPath& path) {
   return MS::kSuccess;
 }
 
-
 MStatus DeleteIntermediateObjects(MDagPath& path) {
   MStatus status;
-  if (IsShapeNode(path)) {
-    path.pop();
-  }
-  if (path.hasFn(MFn::kTransform)) {
-    unsigned int shapeCount;
-    status = path.numberOfShapesDirectlyBelow(shapeCount);
+  MDagPath pathMesh(path);
+  while (GetShapeNode(pathMesh, true) == MS::kSuccess) {
+    status = MGlobal::executeCommand("delete " + pathMesh.partialPathName());
     CHECK_MSTATUS_AND_RETURN_IT(status);
-
-    for (unsigned int i = 0; i < shapeCount; ++i) {
-      status = path.extendToShapeDirectlyBelow(i);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-
-      MFnDagNode fnNode(path, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
-      path.pop();
-      if (fnNode.isIntermediateObject()) {
-        status = MGlobal::executeCommand("delete " + fnNode.partialPathName());
-        CHECK_MSTATUS_AND_RETURN_IT(status);
-      }
-    }
+    pathMesh = MDagPath(path);
   }
   return MS::kSuccess;
 }
-
 
 void GetBarycentricCoordinates(const MPoint& P, const MPoint& A, const MPoint& B, const MPoint& C,
                                BaryCoords& coords) {
