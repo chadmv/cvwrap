@@ -157,7 +157,15 @@ class CVWrapCmd : public MPxCommand {
   MStatus CreateBindMesh(MDagPath& pathBindMesh);
 
   /**
+    Connects the bind mesh message attribute to the wrap deformer.
+  */
+  MStatus ConnectBindMesh(MDagPath& pathBindMesh);
+
+
+  /**
     Calculates the binding data for the wrap deformer to work.
+    @param[in] pathBindMesh The path to the mesh to bind to.
+    @param[in] bindData The structure containing all the bind information.
     @param[in,out] dgMod The modifier to hold all the plug operations.
   */
   MStatus CalculateBinding(MDagPath& pathBindMesh, BindData& bindData, MDGModifier& dgMod);

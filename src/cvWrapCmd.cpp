@@ -289,6 +289,8 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
     status = CreateBindMesh(pathBindMesh);
     CHECK_MSTATUS_AND_RETURN_IT(status);
   }
+  status = ConnectBindMesh(pathBindMesh);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
 
   if (useBinding_) {
     // Import a pre-existing binding.
@@ -378,11 +380,18 @@ MStatus CVWrapCmd::CreateBindMesh(MDagPath& pathBindMesh) {
   status = plug.setBool(false);
   CHECK_MSTATUS_AND_RETURN_IT(status);
   
+  return MS::kSuccess;
+}
+
+
+MStatus CVWrapCmd::ConnectBindMesh(MDagPath& pathBindMesh) {
+  MStatus status;
   // Connect the bind mesh to the wrap node
   status = GetShapeNode(pathBindMesh);
   CHECK_MSTATUS_AND_RETURN_IT(status);
   MFnDagNode fnBindMeshShape(pathBindMesh, &status);
-  MPlug plugBindMessage = fnBindMeshShape.findPlug("message", false, &status);   
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  MPlug plugBindMessage = fnBindMeshShape.findPlug("message", false, &status);
   CHECK_MSTATUS_AND_RETURN_IT(status);
   MPlug plugBindMesh(oWrapNode_, CVWrap::aBindDriverGeo);
   MDGModifier dgMod;
@@ -450,9 +459,14 @@ MStatus CVWrapCmd::CalculateBinding(MDagPath& pathBindMesh, BindData& bindData,
     MPlug plugBarycentricWeights = plugBind.child(CVWrap::aBarycentricWeights, &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
 
-    // TODO: Use the intermediate object for the binding.  This assumes the intermediate object
+    // Use the intermediate object for the binding.  This assumes the intermediate object
     // has the same component count as the displayed shape.
-    MItGeometry itGeo(pathDriven_[geomIndex], drivenComponents_[geomIndex], &status);
+    MDagPath pathDriven(pathDriven_[geomIndex]);
+    status = GetShapeNode(pathDriven, true);
+    if (MFAIL(status)) {
+      pathDriven = pathDriven_[geomIndex];
+    }
+    MItGeometry itGeo(pathDriven, drivenComponents_[geomIndex], &status);
     CHECK_MSTATUS_AND_RETURN_IT(status);
     int geoCount = itGeo.count();
 
@@ -653,7 +667,9 @@ MStatus CVWrapCmd::GetExistingBindMesh(MDagPath &pathBindMesh) {
   
   // We'll find the bind mesh associated with the driver mesh by traversing the mesh connections
   // through the cvWrap node.
-  MPlug plugOutGeom = fnDriver.findPlug("outMesh", false, &status);
+  MPlug plugOutGeom = fnDriver.findPlug("worldMesh", false, &status);
+  CHECK_MSTATUS_AND_RETURN_IT(status);
+  status = plugOutGeom.selectAncestorLogicalIndex(0, plugOutGeom.attribute());
   CHECK_MSTATUS_AND_RETURN_IT(status);
   MPlugArray geomPlugs;
   plugOutGeom.connectedTo(geomPlugs, false, true);
