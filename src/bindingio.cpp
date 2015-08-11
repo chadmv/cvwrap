@@ -1,4 +1,4 @@
-#include "bindingexporter.h"
+#include "bindingio.h"
 #include "cvWrapDeformer.h"
 
 #include <maya/MGlobal.h>
@@ -8,7 +8,7 @@
 #include <maya/MFnMatrixData.h>
 #include <maya/MFnWeightGeometryFilter.h>
 
-const float BindingExporter::kWrapFileVersion = 1.0f;
+const float BindingIO::kWrapFileVersion = 1.0f;
 
 template <>
 void WriteAttribute<double, MMatrix>(std::ofstream &out, const MMatrix& attribute) {
@@ -32,7 +32,7 @@ void ReadAttribute<double, MMatrix>(std::ifstream &in, MMatrix &matrix) {
   }
 }
 
-MStatus BindingExporter::ExportBinding(std::ofstream& out, MObject& oWrapNode) {
+MStatus BindingIO::ExportBinding(std::ofstream& out, MObject& oWrapNode) {
   MStatus status;
   MFnWeightGeometryFilter fnWrapNode(oWrapNode, &status);
   CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -75,9 +75,9 @@ MStatus BindingExporter::ExportBinding(std::ofstream& out, MObject& oWrapNode) {
     unsigned int numElements = plugSampleWeights.numElements();
     out.write((char *)(&numElements), sizeof(numElements));
   
-    for (unsigned int i = 0; i < numElements; ++i) {
+    for (unsigned int j = 0; j < numElements; ++j) {
       // Write the logical index
-      MPlug plugSampleVertElement = plugSampleVerts.elementByPhysicalIndex(i, &status);
+      MPlug plugSampleVertElement = plugSampleVerts.elementByPhysicalIndex(j, &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
       unsigned int logicalIndex = plugSampleVertElement.logicalIndex();
       out.write((char *)(&logicalIndex), sizeof(logicalIndex));
@@ -91,21 +91,21 @@ MStatus BindingExporter::ExportBinding(std::ofstream& out, MObject& oWrapNode) {
       WriteAttribute<int, MIntArray>(out, sampleIds);
 
       // Export sample weights
-      MObject oWeightData = plugSampleWeights.elementByPhysicalIndex(i, &status).asMObject();
+      MObject oWeightData = plugSampleWeights.elementByPhysicalIndex(j, &status).asMObject();
       CHECK_MSTATUS_AND_RETURN_IT(status);
       MFnDoubleArrayData fnDoubleData(oWeightData);
       MDoubleArray weights = fnDoubleData.array();
       WriteAttribute<double, MDoubleArray>(out, weights);
 
       // Export bind matrix
-      MObject oBindMatrix = plugSampleBindMatrix.elementByPhysicalIndex(i, &status).asMObject();
+      MObject oBindMatrix = plugSampleBindMatrix.elementByPhysicalIndex(j, &status).asMObject();
       CHECK_MSTATUS_AND_RETURN_IT(status);
       MFnMatrixData fnMatrixData(oBindMatrix, &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
       WriteAttribute<double, MMatrix>(out, fnMatrixData.matrix());
 
       // Export triangle vertices
-      MObject oTriangleVerts = plugTriangleVerts.elementByPhysicalIndex(i, &status).asMObject();
+      MObject oTriangleVerts = plugTriangleVerts.elementByPhysicalIndex(j, &status).asMObject();
       CHECK_MSTATUS_AND_RETURN_IT(status);
       MFnNumericData fnNumericData(oTriangleVerts, &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -113,7 +113,7 @@ MStatus BindingExporter::ExportBinding(std::ofstream& out, MObject& oWrapNode) {
       WriteAttribute<int, MIntArray>(out, triangleVerts);
 
       // Export the barycentric weights
-      MObject oBaryWeights = plugBarycentricWeights.elementByPhysicalIndex(i, &status).asMObject();
+      MObject oBaryWeights = plugBarycentricWeights.elementByPhysicalIndex(j, &status).asMObject();
       CHECK_MSTATUS_AND_RETURN_IT(status);
       MFnNumericData fnBaryData(oBaryWeights, &status);
       CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -129,7 +129,7 @@ MStatus BindingExporter::ExportBinding(std::ofstream& out, MObject& oWrapNode) {
 
 
 
-MStatus BindingExporter::ImportBinding(std::ifstream& in, MObject& oWrapNode) {
+MStatus BindingIO::ImportBinding(std::ifstream& in, MObject& oWrapNode) {
   MStatus status;
 
   MFnWeightGeometryFilter fnWrapNode(oWrapNode, &status);

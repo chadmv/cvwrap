@@ -1,5 +1,5 @@
-#ifndef CVWRAP_BINDINGEXPORTER_H
-#define CVWRAP_BINDINGEXPORTER_H
+#ifndef CVWRAP_BindingIO_H
+#define CVWRAP_BindingIO_H
 
 #include <maya/MMatrix.h>
 #include <maya/MObject.h>
@@ -7,9 +7,9 @@
 #include <fstream>
 
 /**
-  The BindingExporter is used to import and export binding information from a wrap node.
+  The BindingIO is used to import and export binding information from a wrap node.
 */
-class BindingExporter {
+class BindingIO {
  public:
   /**
     Exports the binding information to disk.

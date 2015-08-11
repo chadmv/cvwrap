@@ -1,6 +1,6 @@
 #include "cvWrapCmd.h"
 #include "cvWrapDeformer.h"
-#include "bindingexporter.h"
+#include "bindingio.h"
 
 #include <maya/MArgDatabase.h>
 #include <maya/MFnDoubleArrayData.h>
@@ -232,7 +232,7 @@ MStatus CVWrapCmd::redoIt() {
       MGlobal::displayInfo("Unable to open file for importing.");
       CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
     }
-    BindingExporter exporter;
+    BindingIO exporter;
     status = exporter.ImportBinding(in, oWrapNode_);
     in.close();
     CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -243,7 +243,7 @@ MStatus CVWrapCmd::redoIt() {
       MGlobal::displayError("Unable to open file for writing.");
       return MS::kFailure;
     }
-    BindingExporter exporter;
+    BindingIO exporter;
     status = exporter.ExportBinding(out, oWrapNode_);
     out.close();
     CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -299,7 +299,7 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
       MGlobal::displayInfo("Unable to open file for importing.");
       CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
     }
-    BindingExporter exporter;
+    BindingIO exporter;
     status = exporter.ImportBinding(in, oWrapNode_);
     in.close();
     CHECK_MSTATUS_AND_RETURN_IT(status);
