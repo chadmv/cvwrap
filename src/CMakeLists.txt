@@ -6,13 +6,18 @@ set(SOURCE_FILES
     "cvWrapDeformer.h"
     "bindingio.cpp"
     "bindingio.h"
-    #"cvWrapRebindCmd.cpp"
-    #"cvWrapRebindCmd.h"
     "common.cpp"
     "common.h"
     "cvwrap.cl"
 )
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MAYA_CXX_FLAGS} /arch:AVX")
+
+if (WIN32)
+    set(COMPILE_FLAGS "/arch:AVX")
+else()
+    set(COMPILE_FLAGS "-mavx")
+endif()
+
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MAYA_CXX_FLAGS} ${COMPILE_FLAGS}")
 find_package(Maya REQUIRED)
 
 include_directories(${MAYA_INCLUDE_DIR})
