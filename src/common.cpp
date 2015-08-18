@@ -11,7 +11,6 @@
 #include <queue>
 #include <utility>
 
-//#define NO_INTRINSICS
 #define NORMALIZATION_INDEX -1
 
 void StartProgress(const MString& title, unsigned int count) {
@@ -323,25 +322,7 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
                               MPoint& origin, MVector& up, MVector& normal) {
   // Start with the recreated point and normal using the barycentric coordinates of the hit point.
   unsigned int hitIndex = weights.length()-1;
-#ifdef NO_INTRINSICS
-  MVector hitNormal;
-  // Create the barycentric point and normal.
-  for (int i = 0; i < 3; ++i) {
-    origin += points[triangleVertices[i]] * coords[i];
-    hitNormal += MVector(normals[triangleVertices[i]]) * coords[i];
-  }
-  // Use crawl data to calculate normal
-  normal = hitNormal * weights[hitIndex];
-  for (unsigned int j = 0; j < hitIndex; j++) {
-    normal += MVector(normals[sampleIds[j]]) * weights[j];
-  }
-
-  // Calculate the up vector
-  // The triangle vertices are sorted by decreasing barycentric coordinates so the first two are
-  // the two closest vertices in the triangle.
-  up = ((points[triangleVertices[0]] + points[triangleVertices[1]]) * 0.5) - origin;
-
-#else
+#ifdef __AVX__
   __m256d originV = Dot4<MPoint>(coords[0], coords[1], coords[2], 0.0,
                                 points[triangleVertices[0]], points[triangleVertices[1]],
                                 points[triangleVertices[2]], MPoint::origin);
@@ -382,6 +363,23 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   up.x = alignedStorage[0];
   up.y = alignedStorage[1];
   up.z = alignedStorage[2];
+#else
+  MVector hitNormal;
+  // Create the barycentric point and normal.
+  for (int i = 0; i < 3; ++i) {
+    origin += points[triangleVertices[i]] * coords[i];
+    hitNormal += MVector(normals[triangleVertices[i]]) * coords[i];
+  }
+  // Use crawl data to calculate normal
+  normal = hitNormal * weights[hitIndex];
+  for (unsigned int j = 0; j < hitIndex; j++) {
+    normal += MVector(normals[sampleIds[j]]) * weights[j];
+  }
+
+  // Calculate the up vector
+  // The triangle vertices are sorted by decreasing barycentric coordinates so the first two are
+  // the two closest vertices in the triangle.
+  up = ((points[triangleVertices[0]] + points[triangleVertices[1]]) * 0.5) - origin;
 #endif
   normal.normalize();
   GetValidUp(weights, points, sampleIds, origin, normal, up);

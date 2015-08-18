@@ -16,8 +16,11 @@
 #include <map>
 #include <vector>
 #include <set>
+
+#ifdef __AVX__
 #include <xmmintrin.h>
 #include <immintrin.h>
+#endif
 
 /**
   Helper function to start a new progress bar.
@@ -191,7 +194,9 @@ struct ThreadData {
   Creates the data stuctures that will be sent to each thread.  Divides the vertices into
   discrete chunks to be evaluated in the threads.
   @param[in] taskCount The number of individual tasks we want to divide the calculation into.
-  @param[in] geomIndex The index of the input geometry we are evaluating.
+  @param[in] elementCount The number of vertices or elements to be divided up.
+  @param[in] taskData The TaskData or BindData object.
+  @param[out] threadData The array of ThreadData objects.  It is assumed the array is of size taskCount.
 */
 template <typename T>
 void CreateThreadData(int taskCount, unsigned int elementCount, T* taskData, ThreadData<T>* threadData) {
@@ -213,6 +218,19 @@ void CreateThreadData(int taskCount, unsigned int elementCount, T* taskData, Thr
   }
 }
 
+#ifdef __AVX__
+/**
+  Calculates 4 dot products at once.
+  @param[in] w1 Weight vector x element.
+  @param[in] w2 Weight vector y element.
+  @param[in] w3 Weight vector z element.
+  @param[in] w4 Weight vector w element.
+  @param[in] p1 First vector.
+  @param[in] p2 Second vector.
+  @param[in] p3 Third vector.
+  @param[in] p4 Fourth vector.
+  @return A __m256d vector where each element is the corresponding p vector dot product with w.
+ */
 template <typename T>
 __m256d Dot4(double w1, double w2, double w3, double w4,
              const T& p1, const T& p2, const T& p3, const T& p4) {
@@ -220,20 +238,22 @@ __m256d Dot4(double w1, double w2, double w3, double w4,
   __m256d yyy = _mm256_set_pd(p1.y, p2.y, p3.y, p4.y);
   __m256d zzz = _mm256_set_pd(p1.z, p2.z, p3.z, p4.z);
   __m256d www = _mm256_set_pd(w1, w2, w3, w4);
-  __m256d xy0 = _mm256_mul_pd(xxx, www);
-  __m256d xy1 = _mm256_mul_pd(yyy, www);
-  __m256d xy2 = _mm256_mul_pd(zzz, www);
-  __m256d xy3 = _mm256_mul_pd(www, www); // Dummy
-  // low to high: xy00+xy01 xy10+xy11 xy02+xy03 xy12+xy13
-  __m256d temp01 = _mm256_hadd_pd(xy0, xy1);   
-  // low to high: xy20+xy21 xy30+xy31 xy22+xy23 xy32+xy33
-  __m256d temp23 = _mm256_hadd_pd(xy2, xy3);
-  // low to high: xy02+xy03 xy12+xy13 xy20+xy21 xy30+xy31
+  __m256d xw = _mm256_mul_pd(xxx, www);
+  __m256d yw = _mm256_mul_pd(yyy, www);
+  __m256d zw = _mm256_mul_pd(zzz, www);
+  __m256d ww = _mm256_mul_pd(www, www); // Dummy
+  // low to high: xw0+xw1 yw0+yw1 xw2+xw3 yw2+yw3
+  __m256d temp01 = _mm256_hadd_pd(xw, yw);   
+  // low to high: zw0+zw1 ww0+ww1 zw2+zw3 ww2+ww3
+  __m256d temp23 = _mm256_hadd_pd(zw, ww);
+  // low to high: xw2+xw3 yw2+yw3 zw0+zw1 ww0+ww1
   __m256d swapped = _mm256_permute2f128_pd(temp01, temp23, 0x21);
-  // low to high: xy00+xy01 xy10+xy11 xy22+xy23 xy32+xy33
+  // low to high: xw0+xw1 yw0+yw1 zw2+zw3 ww2+ww3
   __m256d blended = _mm256_blend_pd(temp01, temp23, 0xC);
+  // low to high: xw0+xw1+xw2+xw3 yw0+yw1+yw2+yw3 zw0+zw1+zw2+zw3 ww0+ww1+ww2+ww3
   __m256d dotproduct = _mm256_add_pd(swapped, blended);
   return dotproduct;
 }
+#endif
 
 #endif
