@@ -21,7 +21,6 @@
 #include "common.h"
 
 struct TaskData {
-  MMatrix driverMatrix;
   MMatrix drivenMatrix;
   MMatrix drivenInverseMatrix;
   float envelope;
