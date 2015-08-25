@@ -186,7 +186,15 @@ struct ThreadData {
   unsigned int start;
   unsigned int end;
   unsigned int numTasks;
+  double* alignedStorage;
   T* pData;
+
+  ThreadData() {
+    alignedStorage = (double*) _mm_malloc(4*sizeof(double), 256);
+  }
+  ~ThreadData() {
+    _mm_free(alignedStorage);
+  }
 };
 
 

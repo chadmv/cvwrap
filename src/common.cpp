@@ -340,7 +340,6 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
     normalV = _mm256_add_pd(tempNormal, normalV);
   }
 
-  //double values[4];
   _mm256_store_pd(alignedStorage, originV);
   origin.x = alignedStorage[0];
   origin.y = alignedStorage[1];

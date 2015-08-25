@@ -568,6 +568,7 @@ bool SortCoords(std::pair<int, float> lhs, std::pair<int, float> rhs) {
 
 MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
   ThreadData<BindData>* pThreadData = static_cast<ThreadData<BindData>*>(pParam);
+  double*& alignedStorage = threadData->alignedStorage;
   BindData* pData = pThreadData->pData;
   MMeshIntersector& intersector = pData->intersector;
   MMeshIntersector& subsetIntersector = pData->subsetIntersector;
@@ -592,7 +593,6 @@ MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
 
   // Pre-allocate the aligned storage for intrinsics calculation so we are not dynamically allocating
   // memory in the loop.
-  double* alignedStorage = (double*) _mm_malloc (4*sizeof(double),256);
   std::vector<std::pair<int, float> > sortedCoords(3);
   for (unsigned int i = taskStart; i < taskEnd; ++i) {
     if (i >= inputPoints.length()) {
@@ -654,7 +654,6 @@ MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
     CreateMatrix(origin, normal, up, bindMatrices[i]);
     bindMatrices[i] = bindMatrices[i].inverse();
   }
-  _mm_free(alignedStorage);
   return 0;
 }
 

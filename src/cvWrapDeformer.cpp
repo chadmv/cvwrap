@@ -345,6 +345,7 @@ void CVWrap::CreateTasks(void *data, MThreadRootTask *pRoot) {
 
 MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
   ThreadData<TaskData>* pThreadData = static_cast<ThreadData<TaskData>*>(pParam);
+  double*& alignedStorage = threadData->alignedStorage;
   TaskData* pData = pThreadData->pData;
   // Get the data out of the struct so it is easier to work with.
   MMatrix& drivenMatrix = pData->drivenMatrix;
@@ -370,7 +371,6 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
   scaleMatrix[0][0] = scale;
   scaleMatrix[1][1] = scale;
   scaleMatrix[2][2] = scale;
-  double* alignedStorage = (double*) _mm_malloc (4*sizeof(double),256);
   for (unsigned int i = taskStart; i < taskEnd; ++i) {
     if (i >= points.length()) {
       break;
@@ -388,7 +388,6 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
     MPoint newPt = ((points[i]  * drivenMatrix) * (bindMatrices[index] * matrix)) * drivenInverseMatrix;
     points[i] = points[i] + ((newPt - points[i]) * paintWeights[i] * env);
   }
-  _mm_free(alignedStorage);
   return 0;
 }
 
