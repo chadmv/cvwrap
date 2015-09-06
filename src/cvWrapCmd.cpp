@@ -568,7 +568,7 @@ bool SortCoords(std::pair<int, float> lhs, std::pair<int, float> rhs) {
 
 MThreadRetVal CVWrapCmd::CalculateBindingTask(void *pParam) {
   ThreadData<BindData>* pThreadData = static_cast<ThreadData<BindData>*>(pParam);
-  double*& alignedStorage = threadData->alignedStorage;
+  double*& alignedStorage = pThreadData->alignedStorage;
   BindData* pData = pThreadData->pData;
   MMeshIntersector& intersector = pData->intersector;
   MMeshIntersector& subsetIntersector = pData->subsetIntersector;

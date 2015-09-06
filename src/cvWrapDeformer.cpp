@@ -345,7 +345,7 @@ void CVWrap::CreateTasks(void *data, MThreadRootTask *pRoot) {
 
 MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
   ThreadData<TaskData>* pThreadData = static_cast<ThreadData<TaskData>*>(pParam);
-  double*& alignedStorage = threadData->alignedStorage;
+  double*& alignedStorage = pThreadData->alignedStorage;
   TaskData* pData = pThreadData->pData;
   // Get the data out of the struct so it is easier to work with.
   MMatrix& drivenMatrix = pData->drivenMatrix;

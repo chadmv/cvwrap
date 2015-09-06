@@ -157,6 +157,7 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
   @param[in] points The driver point array.
   @param[in] normals The driver per-vertex normal array.
   @param[in] sampleIds The vertex ids on the driver of the current sample.
+  @param[in] alignedStorage double array that is 32 byte aligned for AVX.
   @param[out] origin The origin of the coordinate system.
   @param[out] up The up vector of the coordinate system.
   @param[out] normal The normal vector of the coordinate system.
