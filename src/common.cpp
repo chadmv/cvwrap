@@ -352,8 +352,8 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   // Calculate the up vector
   const MPoint& pt1 = points[triangleVertices[0]];
   const MPoint& pt2 = points[triangleVertices[1]];
-  __m256d p1 = _mm256_set_pd(pt1.x, pt1.y, pt1.z, pt1.w);
-  __m256d p2 = _mm256_set_pd(pt2.x, pt2.y, pt2.z, pt2.w);
+  __m256d p1 = _mm256_set_pd(pt1.w, pt1.z, pt1.y, pt1.x);
+  __m256d p2 = _mm256_set_pd(pt2.w, pt2.z, pt2.y, pt2.x);
   p1 = _mm256_add_pd(p1, p2);
   __m256d half = _mm256_set_pd(0.5, 0.5, 0.5, 0.5);
   p1 = _mm256_mul_pd(p1, half);
