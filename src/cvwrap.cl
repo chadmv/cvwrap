@@ -27,10 +27,9 @@ __kernel void cvwrap(__global float* finalPos,
   /*
     Equivalent CPU code:
     ====================
-    MPoint hitPoint;
     MVector hitNormal;
     for (int i = 0; i < 3; ++i) {
-      hitPoint += points[triangleVertices[i]] * coords[i];
+      origin += points[triangleVertices[i]] * coords[i];
       hitNormal += MVector(normals[triangleVertices[i]]) * coords[i];
     }
   */
@@ -63,7 +62,6 @@ __kernel void cvwrap(__global float* finalPos,
     Equivalent CPU code:
     ====================
     unsigned int hitIndex = weights.length()-1;
-    origin = hitPoint * weights[hitIndex];
     normal = hitNormal * weights[hitIndex];
   */
   int offset = sampleOffsets[positionId];
@@ -73,12 +71,11 @@ __kernel void cvwrap(__global float* finalPos,
   float normalY = hitNormalY * hitWeight;
   float normalZ = hitNormalZ * hitWeight;
 
-  // Then use the weighted adjacent data.
+  // Use crawl data to calculate normal
   /*
     Equivalent CPU code:
     ====================
     for (unsigned int j = 0; j < hitIndex; j++) {
-      origin += MVector(points[sampleIds[j]]) * weights[j];
       normal += MVector(normals[sampleIds[j]]) * weights[j];
     }
   */
@@ -95,10 +92,6 @@ __kernel void cvwrap(__global float* finalPos,
     Equivalent CPU code:
     ====================
     up = ((points[triangleVertices[0]] + points[triangleVertices[1]]) * 0.5) - origin;
-    up = (hitPoint - origin) * weights[hitIndex];
-    for (unsigned int j = 0; j < hitIndex; j++) {
-      up += (points[sampleIds[j]] - origin) * weights[j];
-    }
   */
   float upX = ((driverPoints[triVertA] + driverPoints[triVertB]) * 0.5f) - originX;
   float upY = ((driverPoints[triVertA+1] + driverPoints[triVertB+1]) * 0.5f) - originY;
@@ -116,6 +109,8 @@ __kernel void cvwrap(__global float* finalPos,
         up -= (points[sampleIds[j]] - origin) * weights[j];
         unitUp = up.normal();
         if (abs((unitUp * normal) - 1.0) > 0.001 && up.length() > 0.0001) {
+          // If the up and normal vectors are no longer parallel and the up vector has a length,
+          // then we are good to go.
           break;
         }
       }
@@ -126,6 +121,7 @@ __kernel void cvwrap(__global float* finalPos,
   */
   float3 up = (float3)(upX, upY, upZ);
   float3 normal = (float3)(normalX, normalY, normalZ);
+  normal = normalize(normal);
   float3 unitUp = normalize(up);
   float upLength = length(up);
   if (fabs(dot(unitUp, normal) - 1.0f) < 0.001f || upLength < 0.0001f) {
