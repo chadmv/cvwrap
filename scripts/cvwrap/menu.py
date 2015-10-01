@@ -232,8 +232,7 @@ def paint_cvwrap_weights(*args, **kwargs):
     """Activates the paint cvWrap weights context."""
     sel = cmds.ls(sl=True)
     if sel:
-        wrap_nodes = [node for node in cmds.listHistory(sel[0], pdo=True)
-                     if cmds.nodeType(node) == 'cvWrap']
-        if wrap_nodes:
+        wrap_node = get_wrap_node_from_selected()
+        if wrap_node:
             mel.eval('artSetToolAndSelectAttr("artAttrCtx", "cvWrap.{0}.weights");'.format(
-                     wrap_nodes[0]))
+                     wrap_node))
