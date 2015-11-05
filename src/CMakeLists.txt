@@ -17,8 +17,8 @@ else()
     set(COMPILE_FLAGS "-mavx")
 endif()
 
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MAYA_CXX_FLAGS} ${COMPILE_FLAGS}")
 find_package(Maya REQUIRED)
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MAYA_CXX_FLAGS} ${COMPILE_FLAGS}")
 
 include_directories(${MAYA_INCLUDE_DIR})
 link_directories(${MAYA_LIBRARY_DIR})
