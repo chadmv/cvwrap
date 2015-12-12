@@ -17,6 +17,9 @@ def create_menuitems():
     if MENU_ITEMS:
         # Already created
         return
+    if int(cmds.about(v=True)) < 2016:
+        cmds.warning('cvWrap menus only available in Maya 2016 and higher.')
+        return
     for menu in ['mainDeformMenu', 'mainRigDeformationsMenu']:
         # Make sure the menu widgets exist first.
         mel.eval('ChaDeformationsMenu MayaWindow|{0};'.format(menu))
