@@ -9,6 +9,8 @@
 #include <maya/MFnTypedAttribute.h>
 #include <maya/MGlobal.h>
 #include <maya/MItGeometry.h>
+#include <maya/MNodeMessage.h>
+#include <maya/MPlugArray.h>
 #include <cassert>
 
 MTypeId CVWrap::id(0x0011580B);
@@ -212,9 +214,13 @@ MStatus GetDriverData(MDataBlock& data, TaskData& taskData) {
 
 CVWrap::CVWrap() {
   MThreadPool::init();
+  onDeleteCallbackId = NULL;
 }
 
 CVWrap::~CVWrap() {
+  if(onDeleteCallbackId != NULL)
+    MMessage::removeCallback(onDeleteCallbackId);
+	
   MThreadPool::release();
   std::vector<ThreadData<TaskData>*>::iterator iter;
   for (iter = threadData_.begin(); iter != threadData_.end(); ++iter) {
@@ -225,6 +231,26 @@ CVWrap::~CVWrap() {
 
 
 void* CVWrap::creator() { return new CVWrap(); }
+
+void CVWrap::postConstructor()
+{
+  MPxDeformerNode::postConstructor();
+
+  MStatus status = MS::kSuccess;
+  onDeleteCallbackId = MNodeMessage::addNodeAboutToDeleteCallback(thisMObject(), aboutToDeleteCB, NULL, &status);
+}
+
+void CVWrap::aboutToDeleteCB(MObject &node, MDGModifier &modifier, void *clientData)
+{
+  // Find any node connected to .bindMesh and delete it with the deformer, for compatibility with wrap.
+  MPlug bindPlug(node, aBindDriverGeo);
+  MPlugArray bindGeometries;
+  bindPlug.connectedTo(bindGeometries, true, false);
+  for (unsigned int i = 0; i < bindGeometries.length(); i++) {
+    MObject node = bindGeometries[i].node();
+    modifier.deleteNode(node);
+  }
+}
 
 
 MStatus CVWrap::setDependentsDirty(const MPlug& plugBeingDirtied, MPlugArray& affectedPlugs) {
