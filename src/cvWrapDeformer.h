@@ -145,20 +145,24 @@ class CVWrapGPUDeformerInfo : public MGPUDeformerRegistrationInfo {
 		return new CVWrapGPU();
 	}
 	
-	virtual bool validateNode(MDataBlock& block, const MEvaluationNode& evaluationNode,
+
+
+#if MAYA_API_VERSION >= 201650
+	virtual bool validateNodeInGraph(MDataBlock& block, const MEvaluationNode& evaluationNode,
+                                   const MPlug& plug, MStringArray* messages)	{
+		return true;
+	}
+
+	virtual bool validateNodeValues(MDataBlock& block, const MEvaluationNode& evaluationNode,
+                                  const MPlug& plug, MStringArray* messages) {
+		return true;
+	}
+#else
+  virtual bool validateNode(MDataBlock& block, const MEvaluationNode& evaluationNode,
                             const MPlug& plug, MStringArray* messages) {
 		return true;
 	}
-
-	virtual bool validateNodeInGraph(MDataBlock& block, const MEvaluationNode& evaluationNode, const MPlug& plug, MStringArray* messages)
-	{
-		return true;
-	}
-
-	virtual bool validateNodeValues(MDataBlock& block, const MEvaluationNode& evaluationNode, const MPlug& plug, MStringArray* messages)
-	{
-		return true;
-	}
+#endif
 };
 
 #endif // End Maya 2016

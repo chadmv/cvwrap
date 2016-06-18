@@ -1,6 +1,5 @@
 import maya.cmds as cmds
 import maya.mel as mel
-from pymel import versions
 import maya.OpenMayaUI as OpenMayaUI
 import os
 from PySide import QtGui
@@ -18,7 +17,7 @@ def create_menuitems():
     if MENU_ITEMS:
         # Already created
         return
-    if versions.current() < 201600:
+    if cmds.about(api=True) < 201600:
         cmds.warning('cvWrap menus only available in Maya 2016 and higher.')
         return
     for menu in ['mainDeformMenu', 'mainRigDeformationsMenu']:

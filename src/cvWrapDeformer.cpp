@@ -395,6 +395,11 @@ MThreadRetVal CVWrap::EvaluateWrap(void *pParam) {
 #if MAYA_API_VERSION >= 201600
 MString CVWrapGPU::pluginLoadPath;
 
+#if MAYA_API_VERSION >= 201650
+cl_command_queue (*getMayaDefaultOpenCLCommandQueue)() = MOpenCLInfo::getMayaDefaultOpenCLCommandQueue;
+#else
+cl_command_queue (*getMayaDefaultOpenCLCommandQueue)() = MOpenCLInfo::getOpenCLCommandQueue;
+#endif
 /**
   Convenience function to copy array data to the gpu.
 */
@@ -407,7 +412,7 @@ cl_int EnqueueBuffer(MAutoCLMem& mclMem, size_t bufferSize, void* data) {
                                         bufferSize, data, &err));
 	}	else {
 		// The buffer already exists so just copy the data over.
-		err = clEnqueueWriteBuffer(MOpenCLInfo::getMayaDefaultOpenCLCommandQueue(),
+		err = clEnqueueWriteBuffer(getMayaDefaultOpenCLCommandQueue(),
                                mclMem.get(), CL_TRUE, 0, bufferSize,
                                data, 0, NULL, NULL);
 	}
@@ -523,7 +528,7 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
 
   // run the kernel
   err = clEnqueueNDRangeKernel(
-    MOpenCLInfo::getMayaDefaultOpenCLCommandQueue(),
+    getMayaDefaultOpenCLCommandQueue(),
     kernel_.get(),
     1,
     NULL,
