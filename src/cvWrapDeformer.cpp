@@ -407,7 +407,7 @@ cl_int EnqueueBuffer(MAutoCLMem& mclMem, size_t bufferSize, void* data) {
                                         bufferSize, data, &err));
 	}	else {
 		// The buffer already exists so just copy the data over.
-		err = clEnqueueWriteBuffer(MOpenCLInfo::getOpenCLCommandQueue(),
+		err = clEnqueueWriteBuffer(MOpenCLInfo::getMayaDefaultOpenCLCommandQueue(),
                                mclMem.get(), CL_TRUE, 0, bufferSize,
                                data, 0, NULL, NULL);
 	}
@@ -523,7 +523,7 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
 
   // run the kernel
   err = clEnqueueNDRangeKernel(
-    MOpenCLInfo::getOpenCLCommandQueue(),
+    MOpenCLInfo::getMayaDefaultOpenCLCommandQueue(),
     kernel_.get(),
     1,
     NULL,

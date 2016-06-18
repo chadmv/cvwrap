@@ -149,6 +149,16 @@ class CVWrapGPUDeformerInfo : public MGPUDeformerRegistrationInfo {
                             const MPlug& plug, MStringArray* messages) {
 		return true;
 	}
+
+	virtual bool validateNodeInGraph(MDataBlock& block, const MEvaluationNode& evaluationNode, const MPlug& plug, MStringArray* messages)
+	{
+		return true;
+	}
+
+	virtual bool validateNodeValues(MDataBlock& block, const MEvaluationNode& evaluationNode, const MPlug& plug, MStringArray* messages)
+	{
+		return true;
+	}
 };
 
 #endif // End Maya 2016
