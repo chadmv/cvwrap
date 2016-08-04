@@ -1,7 +1,10 @@
-from PySide import QtGui
+import maya.cmds as cmds
+if cmds.about(api=True) >= 201700:
+    from PySide2 import QtWidgets as QtGui
+else:
+    from PySide import QtGui
 from functools import partial
 from maya.app.general.mayaMixin import MayaQWidgetBaseMixin
-import maya.cmds as cmds
 
 _win = None
 def show():
