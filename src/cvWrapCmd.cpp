@@ -472,15 +472,15 @@ MStatus CVWrapCmd::CalculateBinding(MDagPath& pathBindMesh, BindData& bindData,
 
     status = itGeo.allPositions(bindData.inputPoints, MSpace::kWorld);
     CHECK_STATUS_AND_RETURN_IT(status);
-    bindData.sampleIds.resize(itGeo.count());
-    bindData.weights.resize(itGeo.count());
-    bindData.bindMatrices.setLength(itGeo.count());
-    bindData.coords.resize(itGeo.count());
-    bindData.triangleVertices.resize(itGeo.count());
+    bindData.sampleIds.resize(geoCount);
+    bindData.weights.resize(geoCount);
+    bindData.bindMatrices.setLength(geoCount);
+    bindData.coords.resize(geoCount);
+    bindData.triangleVertices.resize(geoCount);
 
     // Send off the threads to calculate the binding.
     ThreadData<BindData> threadData[TASK_COUNT];
-    CreateThreadData<BindData>(TASK_COUNT, itGeo.count(), &bindData, threadData);
+    CreateThreadData<BindData>(TASK_COUNT, geoCount, &bindData, threadData);
     MThreadPool::init();
     MThreadPool::newParallelRegion(CreateTasks, (void *)threadData);
     MThreadPool::release();

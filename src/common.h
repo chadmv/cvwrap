@@ -222,12 +222,15 @@ struct ThreadData {
   @param[out] threadData The array of ThreadData objects.  It is assumed the array is of size taskCount.
 */
 template <typename T>
-void CreateThreadData(int taskCount, unsigned int elementCount, T* taskData, ThreadData<T>* threadData) {
+void CreateThreadData(unsigned int taskCount, unsigned int elementCount, T* taskData, ThreadData<T>* threadData) {
+  if (taskCount == 0) {
+    return;
+  }
   unsigned int taskLength = (elementCount + taskCount - 1) / taskCount;
   unsigned int start = 0;
   unsigned int end = taskLength;
-  int lastTask = taskCount - 1;
-  for(int i = 0; i < taskCount; i++) {
+  unsigned int lastTask = taskCount - 1;
+  for(unsigned int i = 0; i < taskCount; i++) {
     if (i == lastTask) {
       end = elementCount;
     }

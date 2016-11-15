@@ -188,7 +188,7 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
   MStatus status;
   distances[NORMALIZATION_INDEX] = 0.0; // -1 will represent our hit point.
   double minStartDistance = 999999.0;
-  unsigned int minStartIndex = 0;
+  int minStartIndex = 0;
 
   // Instead of a recursive function, which can get pretty slow, we'll use a queue to keep
   // track of where we are going and where we are coming from.
@@ -314,6 +314,7 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
   matrix[3][0] = t.x; matrix[3][1] = t.y; matrix[3][2] = t.z; matrix[3][3] = 1.0;
 }
 
+#ifdef __AVX__
 
 void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coords,
                               const MIntArray& triangleVertices, const MPointArray& points,
@@ -322,7 +323,7 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
                               MPoint& origin, MVector& up, MVector& normal) {
   // Start with the recreated point and normal using the barycentric coordinates of the hit point.
   unsigned int hitIndex = weights.length()-1;
-#ifdef __AVX__
+  
   __m256d originV = Dot4<MPoint>(coords[0], coords[1], coords[2], 0.0,
                                 points[triangleVertices[0]], points[triangleVertices[1]],
                                 points[triangleVertices[2]], MPoint::origin);
@@ -362,7 +363,21 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   up.x = alignedStorage[0];
   up.y = alignedStorage[1];
   up.z = alignedStorage[2];
+
+  normal.normalize();
+  GetValidUp(weights, points, sampleIds, origin, normal, up);
+}
+
 #else
+
+void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coords,
+                              const MIntArray& triangleVertices, const MPointArray& points,
+                              const MFloatVectorArray& normals, const MIntArray& sampleIds,
+                              double* ,
+                              MPoint& origin, MVector& up, MVector& normal) {
+  // Start with the recreated point and normal using the barycentric coordinates of the hit point.
+  unsigned int hitIndex = weights.length()-1;
+  
   MVector hitNormal;
   // Create the barycentric point and normal.
   for (int i = 0; i < 3; ++i) {
@@ -379,11 +394,12 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   // The triangle vertices are sorted by decreasing barycentric coordinates so the first two are
   // the two closest vertices in the triangle.
   up = ((points[triangleVertices[0]] + points[triangleVertices[1]]) * 0.5) - origin;
-#endif
+  
   normal.normalize();
   GetValidUp(weights, points, sampleIds, origin, normal, up);
 }
 
+#endif
 
 void GetValidUp(const MDoubleArray& weights, const MPointArray& points,
                 const MIntArray& sampleIds, const MPoint& origin, const MVector& normal,

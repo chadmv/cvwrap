@@ -214,11 +214,11 @@ MStatus GetDriverData(MDataBlock& data, TaskData& taskData) {
 
 CVWrap::CVWrap() {
   MThreadPool::init();
-  onDeleteCallbackId = NULL;
+  onDeleteCallbackId = 0;
 }
 
 CVWrap::~CVWrap() {
-  if(onDeleteCallbackId != NULL)
+  if(onDeleteCallbackId != 0)
     MMessage::removeCallback(onDeleteCallbackId);
 	
   MThreadPool::release();
@@ -241,7 +241,7 @@ void CVWrap::postConstructor()
   onDeleteCallbackId = MNodeMessage::addNodeAboutToDeleteCallback(obj, aboutToDeleteCB, NULL, &status);
 }
 
-void CVWrap::aboutToDeleteCB(MObject &node, MDGModifier &modifier, void *clientData)
+void CVWrap::aboutToDeleteCB(MObject &node, MDGModifier &modifier, void *)
 {
   // Find any node connected to .bindMesh and delete it with the deformer, for compatibility with wrap.
   MPlug bindPlug(node, aBindDriverGeo);
@@ -254,7 +254,7 @@ void CVWrap::aboutToDeleteCB(MObject &node, MDGModifier &modifier, void *clientD
 }
 
 
-MStatus CVWrap::setDependentsDirty(const MPlug& plugBeingDirtied, MPlugArray& affectedPlugs) {
+MStatus CVWrap::setDependentsDirty(const MPlug& plugBeingDirtied, MPlugArray& ) {
   // Extract the geom index from the dirty plug and set the dirty flag so we know that we need to
   // re-read the binding data.
   if (plugBeingDirtied.isElement()) {
@@ -326,10 +326,11 @@ MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& loca
   // See if we even need to calculate anything.
   taskData.scale = data.inputValue(aScale).asFloat();
   taskData.envelope = data.inputValue(envelope).asFloat();
-  int taskCount = data.inputValue(aNumTasks).asInt();
-  if (taskData.envelope == 0.0f || taskCount <= 0) {
+  int tc = data.inputValue(aNumTasks).asInt();
+  if (taskData.envelope == 0.0f || tc <= 0) {
     return MS::kSuccess;
   }
+  unsigned int taskCount = (unsigned int)tc;
 
   if (geomIndex >= threadData_.size()) {
     // Make sure a ThreadData objects exist for this geomIndex.
@@ -600,6 +601,7 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
 		}
 	}
   cl_int err = EnqueueBuffer(bindMatrices_, arraySize * sizeof(float), (void*)bindMatrices);
+  MOpenCLInfo::checkCLErrorStatus(err);
   delete [] bindMatrices;
 
   // Store samples per vertex
@@ -613,7 +615,9 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
     totalSamples += samplesPerVertex[i];
   }
   err = EnqueueBuffer(sampleCounts_, arraySize * sizeof(int), (void*)samplesPerVertex);
+  MOpenCLInfo::checkCLErrorStatus(err);
   err = EnqueueBuffer(sampleOffsets_, arraySize * sizeof(int), (void*)sampleOffsets);
+  MOpenCLInfo::checkCLErrorStatus(err);
   delete [] samplesPerVertex;
   delete [] sampleOffsets;
 
@@ -629,7 +633,9 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
     }
   }
   err = EnqueueBuffer(sampleIds_, totalSamples * sizeof(int), (void*)sampleIds);
+  MOpenCLInfo::checkCLErrorStatus(err);
   err = EnqueueBuffer(sampleWeights_, totalSamples * sizeof(float), (void*)sampleWeights);
+  MOpenCLInfo::checkCLErrorStatus(err);
   delete [] sampleIds;
   delete [] sampleWeights;
 
@@ -646,14 +652,16 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
     }
   }
   err = EnqueueBuffer(triangleVerts_, arraySize * sizeof(int), (void*)triangleVerts);
+  MOpenCLInfo::checkCLErrorStatus(err);
   err = EnqueueBuffer(baryCoords_, arraySize * sizeof(float), (void*)baryCoords);
+  MOpenCLInfo::checkCLErrorStatus(err);
   delete [] triangleVerts;
   delete [] baryCoords;
   return MS::kSuccess;
 }
 
 
-MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode& evaluationNode, const MPlug& plug) {
+MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode&, const MPlug& plug) {
   MStatus status;
   TaskData taskData;
   status = GetDriverData(data, taskData);
@@ -672,7 +680,8 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode& ev
     driverData[iter++] = (float)taskData.driverPoints[i].z;
   }
   err = EnqueueBuffer(driverPoints_, pointCount * 3 * sizeof(float), (void*)driverData);
-
+  MOpenCLInfo::checkCLErrorStatus(err);
+  
   // Store the driver normals on the gpu.
   for (unsigned int i = 0, iter = 0; i < pointCount; ++i) {
     driverData[iter++] = taskData.driverNormals[i].x;
@@ -680,6 +689,7 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode& ev
     driverData[iter++] = taskData.driverNormals[i].z;
   }
   err = EnqueueBuffer(driverNormals_, pointCount * 3 * sizeof(float), (void*)driverData);
+  MOpenCLInfo::checkCLErrorStatus(err);
 	delete [] driverData;
 
   // Store the driven matrices on the gpu.
@@ -718,6 +728,7 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode& ev
     }
 	}
   err = EnqueueBuffer(drivenMatrices_, 48 * sizeof(float), (void*)drivenMatrices);
+  MOpenCLInfo::checkCLErrorStatus(err);
   return MS::kSuccess;
 }
 
@@ -767,6 +778,7 @@ MStatus CVWrapGPU::EnqueuePaintMapData(MDataBlock& data,
     }
   }
   err = EnqueueBuffer(paintWeights_, numElements * sizeof(float), (void*)paintWeights);
+  MOpenCLInfo::checkCLErrorStatus(err);
   delete [] paintWeights;
   return MS::kSuccess;
 }
