@@ -110,7 +110,7 @@ MStatus GetBindInfo(MDataBlock& data, unsigned int geomIndex, TaskData& taskData
   MStatus status;
   MArrayDataHandle hBindDataArray = data.inputArrayValue(CVWrap::aBindData);
   status = hBindDataArray.jumpToElement(geomIndex);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MDataHandle hBindData = hBindDataArray.inputValue();
 
   MArrayDataHandle hSampleWeights = hBindData.child(CVWrap::aSampleWeights);
@@ -152,13 +152,13 @@ MStatus GetBindInfo(MDataBlock& data, unsigned int geomIndex, TaskData& taskData
     // Get sample ids
     MObject oIndexData = hComponents.inputValue().data();
     MFnIntArrayData fnIntData(oIndexData, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     taskData.sampleIds[logicalIndex] = fnIntData.array();
 
     // Get sample weights
     MObject oWeightData = hSampleWeights.inputValue().data();
     MFnDoubleArrayData fnDoubleData(oWeightData, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     taskData.sampleWeights[logicalIndex] = fnDoubleData.array();
     assert(taskData.sampleWeights[logicalIndex].length() == taskData.sampleIds[logicalIndex].length());
     
@@ -167,7 +167,7 @@ MStatus GetBindInfo(MDataBlock& data, unsigned int geomIndex, TaskData& taskData
 
     // Get triangle vertex binding
     int3& verts = hTriangleVerts.inputValue(&status).asInt3();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MIntArray& triangleVerts = taskData.triangleVerts[logicalIndex];
     triangleVerts.setLength(3);
     triangleVerts[0] = verts[0];
@@ -176,7 +176,7 @@ MStatus GetBindInfo(MDataBlock& data, unsigned int geomIndex, TaskData& taskData
 
     // Get barycentric weights
     float3& baryWeights = hBarycentricWeights.inputValue(&status).asFloat3();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     BaryCoords& coords = taskData.baryCoords[logicalIndex];
     coords[0] = baryWeights[0];
     coords[1] = baryWeights[1];
@@ -195,14 +195,14 @@ MStatus GetDriverData(MDataBlock& data, TaskData& taskData) {
   MStatus status;
   // Get driver geo
   MDataHandle hDriverGeo = data.inputValue(CVWrap::aDriverGeo, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MObject oDriverGeo = hDriverGeo.asMesh();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MFnMesh fnDriver(oDriverGeo, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   // Get the driver point positions
   status = fnDriver.getPoints(taskData.driverPoints, MSpace::kWorld);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   unsigned int numDriverPoints = taskData.driverPoints.length();
   // Get the driver normals
   taskData.driverNormals.setLength(numDriverPoints);
@@ -278,9 +278,9 @@ MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& loca
   
   // Get driver geo
   MDataHandle hDriverGeo = data.inputValue(aDriverGeo, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MObject oDriverGeo = hDriverGeo.asMesh();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   if (oDriverGeo.isNull()) {
     // Without a driver mesh, we can't do anything
     return MS::kSuccess;
@@ -294,16 +294,16 @@ MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& loca
       // If no bind information is stored yet, don't do anything.
       return MS::kSuccess;
     } else if (MFAIL(status)) {
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
     }
   }
 
   // Get driver geo information
   MFnMesh fnDriver(oDriverGeo, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   // Get the driver point positions
   status = fnDriver.getPoints(taskData.driverPoints, MSpace::kWorld);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   unsigned int numDriverPoints = taskData.driverPoints.length();
   // Get the driver normals
   taskData.driverNormals.setLength(numDriverPoints);
@@ -314,7 +314,7 @@ MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& loca
   taskData.membership.setLength(membershipCount);
   taskData.paintWeights.setLength(membershipCount);
   status = itGeo.allPositions(taskData.points);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   for (int i = 0; !itGeo.isDone(); itGeo.next(), i++) {
     taskData.membership[i] = itGeo.index();
     taskData.paintWeights[i] = weightValue(data, geomIndex, itGeo.index());
@@ -351,7 +351,7 @@ MStatus CVWrap::deform(MDataBlock& data, MItGeometry& itGeo, const MMatrix& loca
   MThreadPool::newParallelRegion(CreateTasks, (void *)threadData_[geomIndex]);
 
   status = itGeo.setAllPositions(taskData.points);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   return MS::kSuccess;
 }
@@ -587,7 +587,7 @@ MStatus CVWrapGPU::EnqueueBindData(MDataBlock& data, const MEvaluationNode& eval
   TaskData taskData;
   unsigned int geomIndex = plug.logicalIndex();
   status = GetBindInfo(data, geomIndex, taskData);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   // Flatten out bind matrices to float array
   size_t arraySize = taskData.bindMatrices.length() * 16;
@@ -657,7 +657,7 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode& ev
   MStatus status;
   TaskData taskData;
   status = GetDriverData(data, taskData);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   cl_int err = CL_SUCCESS;
   // Store world space driver points and normals into float arrays.
   // Reuse the same array for points and normals so we're not dynamically allocating double
@@ -686,9 +686,9 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode& ev
   MArrayDataHandle hInputs = data.inputValue(CVWrap::input, &status);
   unsigned int geomIndex = plug.logicalIndex();
   status = hInputs.jumpToElement(geomIndex);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MDataHandle hInput = hInputs.inputValue(&status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MDataHandle hGeom = hInput.child(CVWrap::inputGeom);
   MMatrix localToWorldMatrix = hGeom.geometryTransformMatrix();
   MMatrix worldToLocalMatrix = localToWorldMatrix.inverse();
@@ -707,7 +707,7 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode& ev
 	}
   // Scale matrix is stored row major
   float scale = data.inputValue(CVWrap::aScale, &status).asFloat();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MMatrix scaleMatrix;
   scaleMatrix[0][0] = scale;
   scaleMatrix[1][1] = scale;
@@ -739,7 +739,7 @@ MStatus CVWrapGPU::EnqueuePaintMapData(MDataBlock& data,
   // Since we can't call MPxDeformerNode::weightValue, get the paint weights from the data block.
   float* paintWeights = new float[numElements];
   MArrayDataHandle weightList = data.outputArrayValue(MPxDeformerNode::weightList, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   unsigned int geomIndex = plug.logicalIndex();
   status = weightList.jumpToElement(geomIndex);
   // it is possible that the jumpToElement fails.  In that case all weights are 1.
@@ -753,12 +753,12 @@ MStatus CVWrapGPU::EnqueuePaintMapData(MDataBlock& data,
       paintWeights[i] = 1.0f;
     }
     MDataHandle weightsStructure = weightList.inputValue(&status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MArrayDataHandle weights = weightsStructure.child(MPxDeformerNode::weights);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     // Gather all the non-zero weights
     unsigned int numWeights = weights.elementCount(&status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     for (unsigned int i = 0; i < numWeights; i++, weights.next()) {
       unsigned int weightsElementIndex = weights.elementIndex(&status);
       MDataHandle value = weights.inputValue(&status);

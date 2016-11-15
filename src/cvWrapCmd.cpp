@@ -103,13 +103,13 @@ MStatus CVWrapCmd::doIt(const MArgList& args) {
   MStatus status;
     
   status = GatherCommandArguments(args);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   if (command_ == kCommandImport || command_ == kCommandExport) {
     // In import/export mode, get the selected wrap deformer node so we can read/write
     // data from it.
     status = selectionList_.getDependNode(0, oWrapNode_);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MFnDependencyNode fnNode(oWrapNode_);
     if (fnNode.typeId() != CVWrap::id) {
       MGlobal::displayError("No wrap node specified.");
@@ -117,13 +117,13 @@ MStatus CVWrapCmd::doIt(const MArgList& args) {
     }
   } else if (command_ == kCommandRebind) {
     status = GetGeometryPaths();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     status = Rebind();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   } else {
     // Otherwise get the driver and driven geometry paths.
     status = GetGeometryPaths();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
 
     // Add the cvWrap creation command to the modifier.
     MString command = "deformer -type cvWrap -n \"" + name_ + "\"";
@@ -132,7 +132,7 @@ MStatus CVWrapCmd::doIt(const MArgList& args) {
       command += " " + fnDriven.partialPathName();
     }
     status = dgMod_.commandToExecute(command);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   }
 
   return redoIt();
@@ -150,16 +150,16 @@ MStatus CVWrapCmd::GatherCommandArguments(const MArgList& args) {
   } else if (argData.isFlagSet(kExportFlagShort)) {
     command_ = kCommandExport;
     filePath_ = argData.flagArgumentString(kExportFlagShort, 0, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   } else if (argData.isFlagSet(kImportFlagShort)) {
     command_ = kCommandImport;
     filePath_ = argData.flagArgumentString(kImportFlagShort, 0, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   }
   newBindMesh_ = argData.isFlagSet(kNewBindMeshFlagShort);
   if (argData.isFlagSet(kRadiusFlagShort)) {
     radius_ = argData.flagArgumentDouble(kRadiusFlagShort, 0, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     // Make sure radius is positive
     if (radius_ <= 0.0) {
       radius_ = 0.001;
@@ -167,12 +167,12 @@ MStatus CVWrapCmd::GatherCommandArguments(const MArgList& args) {
   }
   if (argData.isFlagSet(kNameFlagShort)) {
     name_ = argData.flagArgumentString(kNameFlagShort, 0, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   }
   if (argData.isFlagSet(kBindingFlagShort)) {
     useBinding_ = true;
     filePath_ = argData.flagArgumentString(kBindingFlagShort, 0, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   }
   if (argData.isFlagSet(kRebindFlagShort)) {
     command_ = kCommandRebind;
@@ -180,11 +180,11 @@ MStatus CVWrapCmd::GatherCommandArguments(const MArgList& args) {
     MString wrapNode = argData.flagArgumentString(kRebindFlagShort, 0, &status);
     MSelectionList slist;
     status = slist.add(wrapNode);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     status = slist.getDependNode(0, oWrapNode_);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MFnDependencyNode fnNode(oWrapNode_, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     if (fnNode.typeId() != CVWrap::id) {
       MGlobal::displayError(fnNode.name() + " is not a cvWrap node.");
       return MS::kFailure;
@@ -198,7 +198,7 @@ MStatus CVWrapCmd::GetGeometryPaths() {
   MStatus status;
   // The driver is selected last
   status = selectionList_.getDagPath(selectionList_.length() - 1, pathDriver_, driverComponents_);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   status = GetShapeNode(pathDriver_);
   // The driver must be a mesh for this specific algorithm.
   if (!pathDriver_.hasFn(MFn::kMesh)) {
@@ -207,7 +207,7 @@ MStatus CVWrapCmd::GetGeometryPaths() {
   }
 
   MItSelectionList iter(selectionList_);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   pathDriven_.clear();
   drivenComponents_.clear();
   for (unsigned int i = 0; i < selectionList_.length() - 1; ++i, iter.next()) {
@@ -215,7 +215,7 @@ MStatus CVWrapCmd::GetGeometryPaths() {
     MObject component;
     iter.getDagPath(path, component);
     status = GetShapeNode(path);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     pathDriven_.append(path);
     drivenComponents_.append(component);
   }
@@ -230,12 +230,12 @@ MStatus CVWrapCmd::redoIt() {
     std::ifstream in(filePath_.asChar(), ios::binary);
     if (!in.is_open()) {
       MGlobal::displayInfo("Unable to open file for importing.");
-      CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
+      CHECK_STATUS_AND_RETURN_IT(MS::kFailure);
     }
     BindingIO exporter;
     status = exporter.ImportBinding(in, oWrapNode_);
     in.close();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     return MS::kSuccess;
   } else if (command_ == kCommandExport) {
     std::ofstream out(filePath_.asChar(), ios::binary);
@@ -246,15 +246,15 @@ MStatus CVWrapCmd::redoIt() {
     BindingIO exporter;
     status = exporter.ExportBinding(out, oWrapNode_);
     out.close();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     return MS::kSuccess;
   } else if (command_ == kCommandRebind) {
     status = dgMod_.doIt();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     return MS::kSuccess;
   } else if (command_ == kCommandCreate) {
     status = CreateWrapDeformer();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     return MS::kSuccess;
   }
   return MS::kFailure;
@@ -265,17 +265,17 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
   MStatus status;
   // Create the deformer
   status = dgMod_.doIt();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   // Reacquire the paths because on referenced geo, a new driven path is created (the ShapeDeformed).
   status = GetGeometryPaths();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   // Get the created wrap deformer node.
   status = GetLatestWrapNode();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   MFnDependencyNode fnNode(oWrapNode_, &status);
   setResult(fnNode.name());
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   // Create a bind mesh so we can run rebind commands.  We need a mesh at the state of the 
   // initial binding in order to properly calculate rebinding information.  We can't use
@@ -283,46 +283,46 @@ MStatus CVWrapCmd::CreateWrapDeformer() {
   // Check if this driver already has a bind mesh.
   MDagPath pathBindMesh;
   status = GetExistingBindMesh(pathBindMesh);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   if (newBindMesh_ || !pathBindMesh.isValid()) {
     // No bind mesh exists or the user wants to force create a new one.
     status = CreateBindMesh(pathBindMesh);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   }
   status = ConnectBindMesh(pathBindMesh);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   if (useBinding_) {
     // Import a pre-existing binding.
     std::ifstream in(filePath_.asChar(), ios::binary);
     if (!in.is_open()) {
       MGlobal::displayInfo("Unable to open file for importing.");
-      CHECK_MSTATUS_AND_RETURN_IT(MS::kFailure);
+      CHECK_STATUS_AND_RETURN_IT(MS::kFailure);
     }
     BindingIO exporter;
     status = exporter.ImportBinding(in, oWrapNode_);
     in.close();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   } else {
     MDGModifier dgMod;
     BindData bindData;
     status = CalculateBinding(pathBindMesh, bindData, dgMod);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     status = dgMod.doIt();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   }
 
   // Connect the driver mesh to the wrap deformer.
   MFnDagNode fnDriver(pathDriver_);
   MPlug plugDriverMesh = fnDriver.findPlug("worldMesh", false, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   status = plugDriverMesh.selectAncestorLogicalIndex(0, plugDriverMesh.attribute());
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MPlug plugDriverGeo(oWrapNode_, CVWrap::aDriverGeo);
   MDGModifier dgMod;
   dgMod.connect(plugDriverMesh, plugDriverGeo);
   status = dgMod.doIt();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   return MS::kSuccess;
 }
@@ -340,12 +340,12 @@ MStatus CVWrapCmd::GetLatestWrapNode() {
                           MItDependencyGraph::kDepthFirst,
                           MItDependencyGraph::kNodeLevel, 
                           &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MObject oDeformerNode;
   for (; !itDG.isDone(); itDG.next()) {
     oDeformerNode = itDG.currentItem();
     MFnDependencyNode fnNode(oDeformerNode, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     if (fnNode.typeId() == CVWrap::id) {
       oWrapNode_ = oDeformerNode;
       return MS::kSuccess;
@@ -359,7 +359,7 @@ MStatus CVWrapCmd::CreateBindMesh(MDagPath& pathBindMesh) {
   MStatus status;
   MStringArray duplicate;
   MFnDependencyNode fnWrap(oWrapNode_, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MFnDagNode fnDriver(pathDriver_);
 
   // Calling mesh.duplicate() can give incorrect results due to tweaks and such.
@@ -367,18 +367,18 @@ MStatus CVWrapCmd::CreateBindMesh(MDagPath& pathBindMesh) {
   // of the duplicated geometry and it would not be reliable to do it from the modifier.
   MGlobal::executeCommand("duplicate -rr -n " + fnWrap.name() + "Base " + fnDriver.partialPathName(), duplicate);
   status = GetDagPath(duplicate[0], pathBindMesh);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   status = DeleteIntermediateObjects(pathBindMesh);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   bindMeshes_.append(duplicate[0]);
 
   // Hide the duplicate
   MFnDagNode fnBindMesh(pathBindMesh, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MPlug plug = fnBindMesh.findPlug("visibility", &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   status = plug.setBool(false);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   
   return MS::kSuccess;
 }
@@ -388,16 +388,16 @@ MStatus CVWrapCmd::ConnectBindMesh(MDagPath& pathBindMesh) {
   MStatus status;
   // Connect the bind mesh to the wrap node
   status = GetShapeNode(pathBindMesh);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MFnDagNode fnBindMeshShape(pathBindMesh, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MPlug plugBindMessage = fnBindMeshShape.findPlug("message", false, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MPlug plugBindMesh(oWrapNode_, CVWrap::aBindDriverGeo);
   MDGModifier dgMod;
   dgMod.connect(plugBindMessage, plugBindMesh);
   status = dgMod.doIt();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   return MS::kSuccess;
 }
 
@@ -412,21 +412,21 @@ MStatus CVWrapCmd::CalculateBinding(MDagPath& pathBindMesh, BindData& bindData,
   bindData.driverMatrix = pathBindMesh.inclusiveMatrix();
   MObject oBindMesh = pathBindMesh.node();
   status = bindData.intersector.create(oBindMesh, bindData.driverMatrix);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   // We need the adjacency of each vertex in order to crawl the mesh.
   status = GetAdjacency(pathBindMesh, bindData.adjacency);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MFnMesh fnBindMesh(pathBindMesh, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   fnBindMesh.getPoints(bindData.driverPoints, MSpace::kWorld);
   fnBindMesh.getVertexNormals(false, bindData.driverNormals, MSpace::kWorld);
   bindData.perFaceVertices.resize(fnBindMesh.numPolygons());
   bindData.perFaceTriangleVertices.resize(fnBindMesh.numPolygons());
   MIntArray vertexCount, vertexList, triangleCounts, triangleVertices;
   status = fnBindMesh.getVertices(vertexCount, vertexList);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   status = fnBindMesh.getTriangles(triangleCounts, triangleVertices);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   for (unsigned int faceId = 0, iter = 0, triIter = 0; faceId < vertexCount.length(); ++faceId) {
     bindData.perFaceVertices[faceId].clear();
     for (int i = 0; i < vertexCount[faceId]; ++i, ++iter) {
@@ -447,17 +447,17 @@ MStatus CVWrapCmd::CalculateBinding(MDagPath& pathBindMesh, BindData& bindData,
   for (unsigned int geomIndex = 0; geomIndex < pathDriven_.length(); ++geomIndex) {
     // Get the plugs to the binding attributes for this geometry
     MPlug plugBind = plugBindData.elementByLogicalIndex(geomIndex, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MPlug plugSampleWeights = plugBind.child(CVWrap::aSampleWeights, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MPlug plugSampleVerts = plugBind.child(CVWrap::aSampleComponents, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MPlug plugSampleBindMatrix = plugBind.child(CVWrap::aBindMatrix, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MPlug plugTriangleVerts = plugBind.child(CVWrap::aTriangleVerts, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MPlug plugBarycentricWeights = plugBind.child(CVWrap::aBarycentricWeights, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
 
     // Use the intermediate object for the binding.  This assumes the intermediate object
     // has the same component count as the displayed shape.
@@ -467,11 +467,11 @@ MStatus CVWrapCmd::CalculateBinding(MDagPath& pathBindMesh, BindData& bindData,
       pathDriven = pathDriven_[geomIndex];
     }
     MItGeometry itGeo(pathDriven, drivenComponents_[geomIndex], &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     int geoCount = itGeo.count();
 
     status = itGeo.allPositions(bindData.inputPoints, MSpace::kWorld);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     bindData.sampleIds.resize(itGeo.count());
     bindData.weights.resize(itGeo.count());
     bindData.bindMatrices.setLength(itGeo.count());
@@ -492,57 +492,57 @@ MStatus CVWrapCmd::CalculateBinding(MDagPath& pathBindMesh, BindData& bindData,
       // Store sample vert ids.
       MFnIntArrayData fnIntData;
       MObject oIntData = fnIntData.create(bindData.sampleIds[ii], &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       MPlug plugSampleVertsElement = plugSampleVerts.elementByLogicalIndex(logicalIndex, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       status = dgMod.newPlugValue(plugSampleVertsElement, oIntData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
 
       // Store sample weights
       MFnDoubleArrayData fnDoubleData;
       MObject oDoubleData = fnDoubleData.create(bindData.weights[ii], &status);
       assert(bindData.weights[ii].length() > 0);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       MPlug plugSampleWeightsElement = plugSampleWeights.elementByLogicalIndex(logicalIndex,
                                                                                &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       status = dgMod.newPlugValue(plugSampleWeightsElement, oDoubleData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
 
       // Store bind matrix
       MObject oMatrixData = fnMatrixData.create(bindData.bindMatrices[ii], &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       MPlug plugSampleBindMatrixElement = plugSampleBindMatrix.elementByLogicalIndex(logicalIndex,
                                                                                      &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       status = dgMod.newPlugValue(plugSampleBindMatrixElement, oMatrixData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
 
       // Store triangle vertices
       MFnNumericData fnNumericData;
       MObject oNumericData = fnNumericData.create(MFnNumericData::k3Int, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       status = fnNumericData.setData3Int(bindData.triangleVertices[ii][0],
                                          bindData.triangleVertices[ii][1],
                                          bindData.triangleVertices[ii][2]);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       MPlug plugTriangleVertsElement = plugTriangleVerts.elementByLogicalIndex(logicalIndex,
                                                                                &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       status = dgMod.newPlugValue(plugTriangleVertsElement, oNumericData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
 
       // Store barycentric coordinates
       oNumericData = fnNumericData.create(MFnNumericData::k3Float, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       status = fnNumericData.setData3Float(bindData.coords[ii][0], bindData.coords[ii][1],
                                            bindData.coords[ii][2]);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       MPlug plugBarycentricWeightsElement = plugBarycentricWeights.elementByLogicalIndex(
         logicalIndex, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       status = dgMod.newPlugValue(plugBarycentricWeightsElement, oNumericData);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
     }
   }
   return MS::kSuccess;
@@ -662,14 +662,14 @@ MStatus CVWrapCmd::GetExistingBindMesh(MDagPath &pathBindMesh) {
   MStatus status;
   MObject oDriver = pathDriver_.node();
   MFnDependencyNode fnDriver(oDriver, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   
   // We'll find the bind mesh associated with the driver mesh by traversing the mesh connections
   // through the cvWrap node.
   MPlug plugOutGeom = fnDriver.findPlug("worldMesh", false, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   status = plugOutGeom.selectAncestorLogicalIndex(0, plugOutGeom.attribute());
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MPlugArray geomPlugs;
   plugOutGeom.connectedTo(geomPlugs, false, true);
   for (unsigned int i = 0; i < geomPlugs.length(); i++) {
@@ -678,7 +678,7 @@ MStatus CVWrapCmd::GetExistingBindMesh(MDagPath &pathBindMesh) {
     MFnDependencyNode fnNode(oThisNode);
     if (fnNode.typeId() == CVWrap::id) {
       status = GetBindMesh(oThisNode, pathBindMesh);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       return MS::kSuccess;
     }
   }
@@ -692,25 +692,25 @@ MStatus CVWrapCmd::Rebind() {
   // Create bind mesh based off of specified faces
   MDagPath pathDriverSubset;
   status = CreateRebindSubsetMesh(pathDriverSubset);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   // Initialize the subset intersector to enable the rebind during the threaded calculation.
   BindData bindData;
   MObject oBindSubsetMesh = pathDriverSubset.node();
   status = bindData.subsetIntersector.create(oBindSubsetMesh, pathDriverSubset.inclusiveMatrix());
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   MDagPath pathBindMesh;
   status = GetBindMesh(oWrapNode_, pathBindMesh);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   status = CalculateBinding(pathBindMesh, bindData, dgMod_);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   // Delete the subset mesh since we don't need it anymore
   pathDriverSubset.pop();
   status = MGlobal::executeCommand("delete " + pathDriverSubset.partialPathName());
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   return MS::kSuccess;
 }
@@ -722,14 +722,14 @@ MStatus CVWrapCmd::GetBindMesh(MObject& oWrapNode, MDagPath& pathBindMesh) {
   MPlug plugBindMesh(oWrapNode, CVWrap::aBindDriverGeo);
   MPlugArray plugs;
   plugBindMesh.connectedTo(plugs, true, false, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   if (plugs.length() == 0) {
     MGlobal::displayError("Unable to rebind.  No bind mesh is connected.");
     return MS::kFailure;
   }
   MObject oBindMesh = plugs[0].node();
   status = MDagPath::getAPathTo(oBindMesh, pathBindMesh);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   return MS::kSuccess;
 }
 
@@ -741,25 +741,25 @@ MStatus CVWrapCmd::CreateRebindSubsetMesh(MDagPath& pathDriverSubset) {
 
   MDagPath pathBindMesh;
   status = GetBindMesh(oWrapNode_, pathBindMesh);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MFnMesh fnBindMesh(pathBindMesh);
 
   // Duplicate the bind mesh to create subset
   MStringArray duplicate;
   // Calling mesh.duplicate() gave jacked results.
   status = MGlobal::executeCommand("duplicate -rr " + fnBindMesh.partialPathName(), duplicate);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   status = GetDagPath(duplicate[0], pathDriverSubset);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   status = DeleteIntermediateObjects(pathDriverSubset);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   // Get selected driver faces
   MFnSingleIndexedComponent fnDriverComp(driverComponents_, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MIntArray driverFaces;
   status = fnDriverComp.getElements(driverFaces);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   int numFacesToDelete = fnBindMesh.numPolygons() - driverFaces.length();
   if (numFacesToDelete) {
@@ -776,21 +776,21 @@ MStatus CVWrapCmd::CreateRebindSubsetMesh(MDagPath& pathDriverSubset) {
 
     MFnSingleIndexedComponent fnDeleteComp;
     MObject oFacesToDelete = fnDeleteComp.create(MFn::kMeshPolygonComponent, &status);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     status = fnDeleteComp.addElements(facesToDelete);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     MSelectionList deleteList;
     status = deleteList.add(pathDriverSubset, oFacesToDelete);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     status = MGlobal::setActiveSelectionList(deleteList);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     status = MGlobal::executeCommand("delete;");
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     // Reacquire the the dag path since it is invalid now after deleting the faces.
     status = GetDagPath(duplicate[0], pathDriverSubset);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     status = GetShapeNode(pathDriverSubset);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
   }
   return MS::kSuccess;
 }
@@ -799,17 +799,17 @@ MStatus CVWrapCmd::CreateRebindSubsetMesh(MDagPath& pathDriverSubset) {
 MStatus CVWrapCmd::undoIt() {
   MStatus status;
   status = dgMod_.undoIt();
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
 
   if (bindMeshes_.length()) {
     // Delete any created bind meshes.
     MDGModifier mod;
     for (unsigned int i = 0; i < bindMeshes_.length(); i++) {
       status = mod.commandToExecute("delete " + bindMeshes_[i]);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
     }
     status = mod.doIt();
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     bindMeshes_.clear();
   }
 

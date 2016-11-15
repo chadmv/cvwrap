@@ -13,6 +13,8 @@
 #include <maya/MPoint.h>
 #include <maya/MPointArray.h>
 #include <maya/MString.h>
+#include <maya/MStatus.h>
+#include <iostream>
 #include <map>
 #include <vector>
 #include <set>
@@ -21,6 +23,18 @@
 #include <xmmintrin.h>
 #include <immintrin.h>
 #endif
+
+#define CHECK_STATUS_AND_RETURN_IT(_status)    \
+{                             \
+  MStatus _maya_status = (_status);         \
+  if ( MStatus::kSuccess != _maya_status )      \
+  {                         \
+    std::cerr << "\nAPI error detected in " << __FILE__  \
+       << " at line " << __LINE__ << std::endl;    \
+    _maya_status.perror ( "" );           \
+    return (_status);               \
+  }                         \
+}
 
 /**
   Helper function to start a new progress bar.
