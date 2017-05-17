@@ -25,6 +25,8 @@ MStatus initializePlugin(MObject obj) {
     MGlobal::executePythonCommandOnIdle("import cvwrap.menu");
 		MGlobal::executePythonCommandOnIdle("cvwrap.menu.create_menuitems()");
   }
+	
+  MGlobal::executeCommand("makePaintable -attrType multiFloat -sm deformer cvWrap weights");
 
   return status;
 }
