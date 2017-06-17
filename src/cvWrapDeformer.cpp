@@ -237,7 +237,8 @@ void CVWrap::postConstructor()
   MPxDeformerNode::postConstructor();
 
   MStatus status = MS::kSuccess;
-  onDeleteCallbackId = MNodeMessage::addNodeAboutToDeleteCallback(thisMObject(), aboutToDeleteCB, NULL, &status);
+  MObject obj = thisMObject();
+  onDeleteCallbackId = MNodeMessage::addNodeAboutToDeleteCallback(obj, aboutToDeleteCB, NULL, &status);
 }
 
 void CVWrap::aboutToDeleteCB(MObject &node, MDGModifier &modifier, void *clientData)
