@@ -212,7 +212,7 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
   // If we didn't even reach a vertex in the hit face, or the startPoint is equal to a vertex
   // on the face, add the closest vertex so we can calculate a proper up vector
   if (verticesToVisit.size() <= 1) {
-    CrawlData root = {startPoint, maxDistance - 0.001, minStartIndex};
+    CrawlData root = {startPoint, maxDistance - 0.001, (int)minStartIndex};
     verticesToVisit.push(root);
     distances[minStartIndex] = maxDistance - 0.001;
   }
