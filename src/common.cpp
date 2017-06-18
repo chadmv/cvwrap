@@ -7,6 +7,7 @@
 #include <maya/MSelectionList.h>
 #include <algorithm>
 #include <cassert>
+#include <complex>
 #include <set>
 #include <queue>
 #include <utility>
@@ -390,11 +391,11 @@ void GetValidUp(const MDoubleArray& weights, const MPointArray& points,
                 MVector& up) {
   MVector unitUp = up.normal();
   // Adjust up if it's parallel to normal or if it's zero length
-  if (abs((unitUp * normal) - 1.0) < 0.001 || up.length() < 0.0001) {
+  if (std::abs((unitUp * normal) - 1.0) < 0.001 || up.length() < 0.0001) {
     for (unsigned int j = 0; j < weights.length()-1; ++j) {
       up -= (points[sampleIds[j]] - origin) * weights[j];
       unitUp = up.normal();
-      if (abs((unitUp * normal) - 1.0) > 0.001 && up.length() > 0.0001) {
+      if (std::abs((unitUp * normal) - 1.0) > 0.001 && up.length() > 0.0001) {
         // If the up and normal vectors are no longer parallel and the up vector has a length,
         // then we are good to go.
         break;

@@ -214,11 +214,11 @@ MStatus GetDriverData(MDataBlock& data, TaskData& taskData) {
 
 CVWrap::CVWrap() {
   MThreadPool::init();
-  onDeleteCallbackId = NULL;
+  onDeleteCallbackId = 0;
 }
 
 CVWrap::~CVWrap() {
-  if(onDeleteCallbackId != NULL)
+  if (onDeleteCallbackId != 0)
     MMessage::removeCallback(onDeleteCallbackId);
 	
   MThreadPool::release();
@@ -485,7 +485,7 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
     openCLKernelFile += "/cvwrap.cl";
     kernel_ = MOpenCLInfo::getOpenCLKernel(openCLKernelFile, "cvwrap");
     if (kernel_.isNull())  {
-      std::cerr << "Could not compile kernel " << openCLKernelFile << "\n";
+      std::cerr << "Could not compile kernel " << openCLKernelFile.asChar() << "\n";
       return MPxGPUDeformer::kDeformerFailure;
     }
   }
