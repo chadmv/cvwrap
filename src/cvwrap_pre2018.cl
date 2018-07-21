@@ -14,9 +14,7 @@ __kernel void cvwrap(__global float* finalPos,
                      __global const int* triangleVerts,
                      __global const float* baryCoords,
                      __global const float4* bindMatrices,
-                     __global const float4* scaleMatrix,
-                     __global const float* drivenWorldMatrix,
-                     __global const float* drivenInvMatrix,
+                     __global const float4* drivenMatrices,
                      const float envelope,
                      const uint positionCount) {
   unsigned int positionId = get_global_id(0);
@@ -164,6 +162,7 @@ __kernel void cvwrap(__global float* finalPos,
     ====================
     matrix = scaleMatrix * matrix;
   */
+  __global const float4* scaleMatrix = &(drivenMatrices[8]);
   float4 scaleMatrix0 = (float4)(dot(scaleMatrix[0], matrix0),
                         dot(scaleMatrix[0], matrix1),
                         dot(scaleMatrix[0], matrix2),
@@ -205,26 +204,19 @@ __kernel void cvwrap(__global float* finalPos,
                                     initialPos[positionOffset+1],
                                     initialPos[positionOffset+2],
                                     1.0f);
-
-  float4 drivenMatrixTransposed[4];
-  float4 drivenInvMatrixTransposed[4];
-  for (uint i=0; i < 4; i++)
-  {
-    drivenMatrixTransposed[i] = (float4)(drivenWorldMatrix[i], drivenWorldMatrix[i+4], drivenWorldMatrix[i+8], drivenWorldMatrix[i+12]);
-    drivenInvMatrixTransposed[i] = (float4)(drivenInvMatrix[i], drivenInvMatrix[i+4], drivenInvMatrix[i+8], drivenInvMatrix[i+12]);
-  }
-
-  float4 worldPt = (float4)(dot(initialPosition, drivenMatrixTransposed[0]),
-                            dot(initialPosition, drivenMatrixTransposed[1]),
-                            dot(initialPosition, drivenMatrixTransposed[2]),
-                            dot(initialPosition, drivenMatrixTransposed[3]));
+  __global const float4* drivenInverseMatrix = &(drivenMatrices[4]);
+	__global const float4* drivenMatrix = drivenMatrices;
+  float4 worldPt = (float4)(dot(initialPosition, drivenMatrix[0]),
+                            dot(initialPosition, drivenMatrix[1]),
+                            dot(initialPosition, drivenMatrix[2]),
+                            dot(initialPosition, drivenMatrix[3]));
   worldPt = (float4)(dot(worldPt, (float4)(m0.x, m1.x, m2.x, m3.x)),
                      dot(worldPt, (float4)(m0.y, m1.y, m2.y, m3.y)),
                      dot(worldPt, (float4)(m0.z, m1.z, m2.z, m3.z)),
                      dot(worldPt, (float4)(m0.w, m1.w, m2.w, m3.w)));
-  float3 newPt = (float3)(dot(worldPt, drivenInvMatrixTransposed[0]),
-                          dot(worldPt, drivenInvMatrixTransposed[1]),
-                          dot(worldPt, drivenInvMatrixTransposed[2]));
+  float3 newPt = (float3)(dot(worldPt, drivenInverseMatrix[0]),
+                          dot(worldPt, drivenInverseMatrix[1]),
+                          dot(worldPt, drivenInverseMatrix[2]));
   /*
     Equivalent CPU code:
     ====================
