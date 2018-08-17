@@ -92,8 +92,6 @@ MStatus CVWrap::initialize() {
   nAttr.setMax(64);
   addAttribute(aNumTasks);
   attributeAffects(aNumTasks, outputGeom);
-
-  MGlobal::executeCommand("makePaintable -attrType multiFloat -sm deformer cvWrap weights");
     
   return MS::kSuccess;
 }
