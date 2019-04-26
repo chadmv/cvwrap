@@ -100,11 +100,16 @@ class CVWrapGPU : public MPxGPUDeformer {
 	CVWrapGPU();
 	virtual ~CVWrapGPU();
 
-	
+#if MAYA_API_VERSION <= 201700
 	virtual MPxGPUDeformer::DeformerStatus evaluate(MDataBlock& block, const MEvaluationNode&,
                                                   const MPlug& plug, unsigned int numElements,
                                                   const MAutoCLMem, const MAutoCLEvent,
                                                   MAutoCLMem, MAutoCLEvent&);
+#else
+	virtual MPxGPUDeformer::DeformerStatus evaluate(MDataBlock& block, const MEvaluationNode& evaluationNode,
+													const MPlug& plug, const MGPUDeformerData& inputData,
+													MGPUDeformerData& outputData);
+#endif
 	virtual void terminate();
 
 	static MGPUDeformerRegistrationInfo* GetGPUDeformerInfo();

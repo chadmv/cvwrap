@@ -204,12 +204,14 @@ struct ThreadData {
   double* alignedStorage;
   T* pData;
 
+#ifdef __AVX__
   ThreadData() {
     alignedStorage = (double*) _mm_malloc(4*sizeof(double), 256);
   }
   ~ThreadData() {
     _mm_free(alignedStorage);
   }
+#endif
 };
 
 
