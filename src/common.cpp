@@ -73,14 +73,14 @@ MStatus GetShapeNode(MDagPath& path, bool intermediate) {
 
     for (unsigned int i = 0; i < shapeCount; ++i) {
       status = path.push(path.child(i));
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       if (!IsShapeNode(path)) {
         path.pop();
         continue;
       }
 
       MFnDagNode fnNode(path, &status);
-      CHECK_MSTATUS_AND_RETURN_IT(status);
+      CHECK_STATUS_AND_RETURN_IT(status);
       if ((!fnNode.isIntermediateObject() && !intermediate) ||
           (fnNode.isIntermediateObject() && intermediate)) {
         return MS::kSuccess;
@@ -99,9 +99,9 @@ MStatus GetDagPath(MString& name, MDagPath& path) {
   MStatus status;
   MSelectionList list;
   status = MGlobal::getSelectionListByName(name, list);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   status = list.getDagPath(0, path);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   return MS::kSuccess;
 }
 
@@ -110,7 +110,7 @@ MStatus DeleteIntermediateObjects(MDagPath& path) {
   MDagPath pathMesh(path);
   while (GetShapeNode(pathMesh, true) == MS::kSuccess) {
     status = MGlobal::executeCommand("delete " + pathMesh.partialPathName());
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     pathMesh = MDagPath(path);
   }
   return MS::kSuccess;
@@ -150,14 +150,14 @@ MStatus GetAdjacency(MDagPath& pathMesh, std::vector<std::set<int> >& adjacency)
   MStatus status;
   // Get mesh adjacency.  The adjacency will be all vertex ids on the connected faces.
   MItMeshVertex itVert(pathMesh, MObject::kNullObj, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   MFnMesh fnMesh(pathMesh, &status);
-  CHECK_MSTATUS_AND_RETURN_IT(status);
+  CHECK_STATUS_AND_RETURN_IT(status);
   adjacency.resize(itVert.count());
   for (; !itVert.isDone(); itVert.next()) {
     MIntArray faces;
     status = itVert.getConnectedFaces(faces);
-    CHECK_MSTATUS_AND_RETURN_IT(status);
+    CHECK_STATUS_AND_RETURN_IT(status);
     adjacency[itVert.index()].clear();
     // Put the vertex ids in a set to avoid duplicates
     for (unsigned int j = 0; j < faces.length(); ++j) {
@@ -189,7 +189,7 @@ MStatus CrawlSurface(const MPoint& startPoint, const MIntArray& vertexIndices, M
   MStatus status;
   distances[NORMALIZATION_INDEX] = 0.0; // -1 will represent our hit point.
   double minStartDistance = 999999.0;
-  unsigned int minStartIndex = 0;
+  int minStartIndex = 0;
 
   // Instead of a recursive function, which can get pretty slow, we'll use a queue to keep
   // track of where we are going and where we are coming from.
@@ -315,6 +315,7 @@ void CreateMatrix(const MPoint& origin, const MVector& normal, const MVector& up
   matrix[3][0] = t.x; matrix[3][1] = t.y; matrix[3][2] = t.z; matrix[3][3] = 1.0;
 }
 
+#ifdef __AVX__
 
 void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coords,
                               const MIntArray& triangleVertices, const MPointArray& points,
@@ -323,7 +324,7 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
                               MPoint& origin, MVector& up, MVector& normal) {
   // Start with the recreated point and normal using the barycentric coordinates of the hit point.
   unsigned int hitIndex = weights.length()-1;
-#ifdef __AVX__
+  
   __m256d originV = Dot4<MPoint>(coords[0], coords[1], coords[2], 0.0,
                                 points[triangleVertices[0]], points[triangleVertices[1]],
                                 points[triangleVertices[2]], MPoint::origin);
@@ -363,7 +364,21 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   up.x = alignedStorage[0];
   up.y = alignedStorage[1];
   up.z = alignedStorage[2];
+
+  normal.normalize();
+  GetValidUp(weights, points, sampleIds, origin, normal, up);
+}
+
 #else
+
+void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coords,
+                              const MIntArray& triangleVertices, const MPointArray& points,
+                              const MFloatVectorArray& normals, const MIntArray& sampleIds,
+                              double* ,
+                              MPoint& origin, MVector& up, MVector& normal) {
+  // Start with the recreated point and normal using the barycentric coordinates of the hit point.
+  unsigned int hitIndex = weights.length()-1;
+  
   MVector hitNormal;
   // Create the barycentric point and normal.
   for (int i = 0; i < 3; ++i) {
@@ -380,11 +395,12 @@ void CalculateBasisComponents(const MDoubleArray& weights, const BaryCoords& coo
   // The triangle vertices are sorted by decreasing barycentric coordinates so the first two are
   // the two closest vertices in the triangle.
   up = ((points[triangleVertices[0]] + points[triangleVertices[1]]) * 0.5) - origin;
-#endif
+  
   normal.normalize();
   GetValidUp(weights, points, sampleIds, origin, normal, up);
 }
 
+#endif
 
 void GetValidUp(const MDoubleArray& weights, const MPointArray& points,
                 const MIntArray& sampleIds, const MPoint& origin, const MVector& normal,

@@ -13,6 +13,8 @@
 #include <maya/MPoint.h>
 #include <maya/MPointArray.h>
 #include <maya/MString.h>
+#include <maya/MStatus.h>
+#include <iostream>
 #include <map>
 #include <vector>
 #include <set>
@@ -21,6 +23,18 @@
 #include <xmmintrin.h>
 #include <immintrin.h>
 #endif
+
+#define CHECK_STATUS_AND_RETURN_IT(_status)    \
+{                             \
+  MStatus _maya_status = (_status);         \
+  if ( MStatus::kSuccess != _maya_status )      \
+  {                         \
+    std::cerr << "\nAPI error detected in " << __FILE__  \
+       << " at line " << __LINE__ << std::endl;    \
+    _maya_status.perror ( "" );           \
+    return (_status);               \
+  }                         \
+}
 
 /**
   Helper function to start a new progress bar.
@@ -210,12 +224,15 @@ struct ThreadData {
   @param[out] threadData The array of ThreadData objects.  It is assumed the array is of size taskCount.
 */
 template <typename T>
-void CreateThreadData(int taskCount, unsigned int elementCount, T* taskData, ThreadData<T>* threadData) {
+void CreateThreadData(unsigned int taskCount, unsigned int elementCount, T* taskData, ThreadData<T>* threadData) {
+  if (taskCount == 0) {
+    return;
+  }
   unsigned int taskLength = (elementCount + taskCount - 1) / taskCount;
   unsigned int start = 0;
   unsigned int end = taskLength;
-  int lastTask = taskCount - 1;
-  for(int i = 0; i < taskCount; i++) {
+  unsigned int lastTask = taskCount - 1;
+  for(unsigned int i = 0; i < taskCount; i++) {
     if (i == lastTask) {
       end = elementCount;
     }
