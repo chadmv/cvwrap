@@ -1,4 +1,9 @@
+from __future__ import absolute_import
+from __future__ import print_function
+
 import maya.cmds as cmds
+
+
 if cmds.about(api=True) >= 201700:
     from PySide2 import QtWidgets as QtGui
 else:
@@ -7,6 +12,8 @@ from functools import partial
 from maya.app.general.mayaMixin import MayaQWidgetBaseMixin
 
 _win = None
+
+
 def show():
     global _win
     if _win == None:
@@ -27,34 +34,40 @@ class BindingDialog(MayaQWidgetBaseMixin, QtGui.QDialog):
         hbox = QtGui.QHBoxLayout()
         vbox.addLayout(hbox)
         label = QtGui.QLabel('Components to rebind:')
-        label.setSizePolicy(QtGui.QSizePolicy.Preferred, QtGui.QSizePolicy.Fixed)
+        label.setSizePolicy(QtGui.QSizePolicy.Preferred,
+                            QtGui.QSizePolicy.Fixed)
         label.setMinimumWidth(label_width)
         label.setMaximumWidth(label_width)
         hbox.addWidget(label)
         self.components_to_rebind = QtGui.QLineEdit()
-        self.components_to_rebind.textChanged.connect(self.populate_cvwrap_dropdown)
+        self.components_to_rebind.textChanged.connect(
+            self.populate_cvwrap_dropdown)
         hbox.addWidget(self.components_to_rebind)
         button = QtGui.QPushButton('Set Components')
-        button.released.connect(partial(self.set_selected_text, widget=self.components_to_rebind))
+        button.released.connect(
+            partial(self.set_selected_text, widget=self.components_to_rebind))
         hbox.addWidget(button)
 
         hbox = QtGui.QHBoxLayout()
         vbox.addLayout(hbox)
         label = QtGui.QLabel('Faces to rebind to:')
-        label.setSizePolicy(QtGui.QSizePolicy.Preferred, QtGui.QSizePolicy.Fixed)
+        label.setSizePolicy(QtGui.QSizePolicy.Preferred,
+                            QtGui.QSizePolicy.Fixed)
         label.setMinimumWidth(label_width)
         label.setMaximumWidth(label_width)
         hbox.addWidget(label)
         self.target_faces = QtGui.QLineEdit()
         hbox.addWidget(self.target_faces)
         button = QtGui.QPushButton('Set Faces')
-        button.released.connect(partial(self.set_selected_text, widget=self.target_faces))
+        button.released.connect(partial(self.set_selected_text,
+                                        widget=self.target_faces))
         hbox.addWidget(button)
 
         hbox = QtGui.QHBoxLayout()
         vbox.addLayout(hbox)
         label = QtGui.QLabel('cvWrap node:')
-        label.setSizePolicy(QtGui.QSizePolicy.Preferred, QtGui.QSizePolicy.Fixed)
+        label.setSizePolicy(QtGui.QSizePolicy.Preferred,
+                            QtGui.QSizePolicy.Fixed)
         label.setMinimumWidth(label_width)
         label.setMaximumWidth(label_width)
         hbox.addWidget(label)
@@ -64,7 +77,8 @@ class BindingDialog(MayaQWidgetBaseMixin, QtGui.QDialog):
         hbox = QtGui.QHBoxLayout()
         vbox.addLayout(hbox)
         label = QtGui.QLabel('Sample radius:')
-        label.setSizePolicy(QtGui.QSizePolicy.Preferred, QtGui.QSizePolicy.Fixed)
+        label.setSizePolicy(QtGui.QSizePolicy.Preferred,
+                            QtGui.QSizePolicy.Fixed)
         label.setMinimumWidth(label_width)
         label.setMaximumWidth(label_width)
         hbox.addWidget(label)
@@ -106,7 +120,8 @@ class BindingDialog(MayaQWidgetBaseMixin, QtGui.QDialog):
         faces = self.target_faces.text().split()
         wrap_node = self.cvwrap_combo.currentText()
         radius = self.sample_radius.value()
-        # Make sure the faces are actual faces.  If they are not, convert to faces.
+        # Make sure the faces are actual faces.
+        # If they are not, convert to faces.
         cmds.select(faces)
         cmds.ConvertSelectionToFaces()
         faces = cmds.ls(sl=True)
@@ -115,5 +130,4 @@ class BindingDialog(MayaQWidgetBaseMixin, QtGui.QDialog):
         cmds.ConvertSelectionToVertices()
         cmds.select(faces, add=True)
         cmds.cvWrap(rb=wrap_node, radius=radius)
-        print 'Rebounded vertices'
-
+        print('Rebounded vertices')

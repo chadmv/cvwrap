@@ -1,7 +1,12 @@
-import maya.cmds as cmds
-import maya.mel as mel
-import maya.OpenMayaUI as OpenMayaUI
+from __future__ import absolute_import
+from __future__ import print_function
+
 import os
+
+import maya.mel as mel
+import maya.cmds as cmds
+# import maya.OpenMayaUI as OpenMayaUI
+
 if cmds.about(api=True) >= 201700:
     from PySide2 import QtGui
 else:
@@ -54,9 +59,9 @@ def create_menuitems():
                                          sourceType='python', parent=submenu)
                     MENU_ITEMS.append(item)
             elif menu_label == 'Cluster' and section == 'Paint Weights':
-                    item = cmds.menuItem(label="cvWrap", command=paint_cvwrap_weights,
-                                         sourceType='python', insertAfter=item, parent=menu)
-                    MENU_ITEMS.append(item)
+                item = cmds.menuItem(label="cvWrap", command=paint_cvwrap_weights,
+                                     sourceType='python', insertAfter=item, parent=menu)
+                MENU_ITEMS.append(item)
 
 
 def create_cvwrap(*args, **kwargs):
@@ -65,9 +70,10 @@ def create_cvwrap(*args, **kwargs):
     if len(sel) >= 2:
         kwargs = get_create_command_kwargs()
         result = cmds.cvWrap(**kwargs)
-        print result
+        print(result)
     else:
-        raise RuntimeError("Select at least one surface and one influence object.")
+        raise RuntimeError(
+            "Select at least one surface and one influence object.")
 
 
 def get_create_command_kwargs():
@@ -98,7 +104,8 @@ def get_create_command_kwargs():
             args['newBindMesh'] = True
 
     if cmds.textFieldButtonGrp(BIND_FILE_WIDGET, exists=True):
-        bind_file = cmds.textFieldButtonGrp(BIND_FILE_WIDGET, q=True, text=True)
+        bind_file = cmds.textFieldButtonGrp(
+            BIND_FILE_WIDGET, q=True, text=True)
         bind_file = os.path.expandvars(bind_file.strip())
         if bind_file:
             if os.path.exists(bind_file):
@@ -162,7 +169,9 @@ def close_option_box(*args, **kwargs):
 
 
 def display_bind_file_dialog(*args, **kwargs):
-    """Displays the dialog to choose the binding file with which to create the cvWrap deformer."""
+    """Displays the dialog to choose the binding file with
+    which to create the cvWrap deformer.
+    """
     root_dir = cmds.workspace(q=True, rootDirectory=True)
     start_directory = os.path.join(root_dir, 'data')
     file_path = cmds.fileDialog2(fileFilter='*.wrap', dialogStyle=2, fileMode=1,
@@ -221,8 +230,8 @@ def get_wrap_node_from_selected():
     if len(wrap_nodes) == 1:
         return wrap_nodes[0]
     else:
-        # Multiple wrap nodes are deforming the mesh.  Let the user choose which one
-        # to use.
+        # Multiple wrap nodes are deforming the mesh.
+        # Let the user choose which one to use.
         return QtGui.QInputDialog.getItem(None, 'Select cvWrap node', 'cvWrap node:', wrap_nodes)
 
 

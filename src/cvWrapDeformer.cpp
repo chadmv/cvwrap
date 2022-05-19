@@ -218,7 +218,7 @@ CVWrap::CVWrap() {
 }
 
 CVWrap::~CVWrap() {
-  if(onDeleteCallbackId != 0)
+  if (onDeleteCallbackId != 0)
     MMessage::removeCallback(onDeleteCallbackId);
 	
   MThreadPool::release();
@@ -461,7 +461,7 @@ CVWrapGPU::~CVWrapGPU() {
   terminate();
 }
 
-
+#if MAYA_API_VERSION <= 201700
 MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
                                                    const MEvaluationNode& evaluationNode,
                                                    const MPlug& plug,
@@ -470,6 +470,24 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
                                                    const MAutoCLEvent inputEvent,
                                                    MAutoCLMem outputBuffer,
                                                    MAutoCLEvent& outputEvent) {
+#else
+MPxGPUDeformer::DeformerStatus  CVWrapGPU::evaluate(MDataBlock& block,
+													const MEvaluationNode& evaluationNode,
+													const MPlug& plug,
+													const MGPUDeformerData& inputData,
+													MGPUDeformerData& outputData) {
+	// get the input GPU data and event
+	MGPUDeformerBuffer inputDeformerBuffer = inputData.getBuffer(sPositionsName());
+	const MAutoCLMem inputBuffer = inputDeformerBuffer.buffer();
+	unsigned int numElements = inputDeformerBuffer.elementCount();
+	const MAutoCLEvent inputEvent = inputDeformerBuffer.bufferReadyEvent();
+
+	// create the output buffer
+	MGPUDeformerBuffer outputDeformerBuffer = createOutputBuffer(inputDeformerBuffer);
+	MAutoCLEvent outputEvent;
+	MAutoCLMem outputBuffer = outputDeformerBuffer.buffer();
+#endif
+
   MStatus status;
   numElements_ = numElements;
   // Copy all necessary data to the gpu.
@@ -483,10 +501,14 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
   if (!kernel_.get())  {
     // Load the OpenCL kernel if we haven't yet.
     MString openCLKernelFile(pluginLoadPath);
-    openCLKernelFile += "/cvwrap.cl";
+#if MAYA_API_VERSION > 201700
+	openCLKernelFile += "/cvwrap.cl";
+#else
+    openCLKernelFile += "/cvwrap_pre2018.cl";
+#endif
     kernel_ = MOpenCLInfo::getOpenCLKernel(openCLKernelFile, "cvwrap");
     if (kernel_.isNull())  {
-      std::cerr << "Could not compile kernel " << openCLKernelFile << "\n";
+      std::cerr << "Could not compile kernel " << openCLKernelFile.asChar() << "\n";
       return MPxGPUDeformer::kDeformerFailure;
     }
   }
@@ -523,6 +545,18 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
   MOpenCLInfo::checkCLErrorStatus(err);
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)drivenMatrices_.getReadOnlyRef());
   MOpenCLInfo::checkCLErrorStatus(err);
+#if MAYA_API_VERSION > 201700
+  // get the world space and inverse world space matrix mem handles
+  MGPUDeformerBuffer inputWorldSpaceMatrixDeformerBuffer = inputData.getBuffer(sGeometryMatrixName());
+  const MAutoCLMem deformerWorldSpaceMatrix = inputWorldSpaceMatrixDeformerBuffer.buffer();
+  MGPUDeformerBuffer inputInvWorldSpaceMatrixDeformerBuffer = inputData.getBuffer(sInverseGeometryMatrixName());
+  const MAutoCLMem deformerInvWorldSpaceMatrix = inputInvWorldSpaceMatrixDeformerBuffer.buffer();
+  // Note: these matrices are in row major order
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)deformerWorldSpaceMatrix.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+  err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_mem), (void*)deformerInvWorldSpaceMatrix.getReadOnlyRef());
+  MOpenCLInfo::checkCLErrorStatus(err);
+#endif
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_float), (void*)&envelope);
   MOpenCLInfo::checkCLErrorStatus(err);
   err = clSetKernelArg(kernel_.get(), parameterId++, sizeof(cl_uint), (void*)&numElements_);
@@ -566,6 +600,12 @@ MPxGPUDeformer::DeformerStatus CVWrapGPU::evaluate(MDataBlock& block,
     numInputEvents ? inputEvent.getReadOnlyRef() : 0,
     outputEvent.getReferenceForAssignment() );
   MOpenCLInfo::checkCLErrorStatus(err);
+
+#if MAYA_API_VERSION > 201700
+  // set the buffer into the output data
+  outputDeformerBuffer.setBufferReadyEvent(outputEvent);
+  outputData.setBuffer(outputDeformerBuffer);
+#endif
 
   return MPxGPUDeformer::kDeformerSuccess;
 }
@@ -692,6 +732,8 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode&, c
   MOpenCLInfo::checkCLErrorStatus(err);
 	delete [] driverData;
 
+  int idx = 0;
+#if MAYA_API_VERSION <= 201700
   // Store the driven matrices on the gpu.
   MArrayDataHandle hInputs = data.inputValue(CVWrap::input, &status);
   unsigned int geomIndex = plug.logicalIndex();
@@ -702,8 +744,8 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode&, c
   MDataHandle hGeom = hInput.child(CVWrap::inputGeom);
   MMatrix localToWorldMatrix = hGeom.geometryTransformMatrix();
   MMatrix worldToLocalMatrix = localToWorldMatrix.inverse();
-	float drivenMatrices[48]; // 0-15: localToWorld, 16-31: worldToLocal, 32-47: scale
-  int idx = 0;
+  float drivenMatrices[48]; // 0-15: localToWorld, 16-31: worldToLocal, 32-47: scale
+
   // Store in column order so we can dot in the cl kernel.
   for(unsigned int column = 0; column < 4; column++) {
     for(unsigned int row = 0; row < 4; row++) {
@@ -715,6 +757,9 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode&, c
 			drivenMatrices[idx++] = (float)worldToLocalMatrix(row, column);
     }
 	}
+#else
+	float drivenMatrices[16]; // 0-15: scale
+#endif
   // Scale matrix is stored row major
   float scale = data.inputValue(CVWrap::aScale, &status).asFloat();
   CHECK_STATUS_AND_RETURN_IT(status);
@@ -727,8 +772,11 @@ MStatus CVWrapGPU::EnqueueDriverData(MDataBlock& data, const MEvaluationNode&, c
 			drivenMatrices[idx++] = (float)scaleMatrix(row, column);
     }
 	}
+#if MAYA_API_VERSION <= 201700
   err = EnqueueBuffer(drivenMatrices_, 48 * sizeof(float), (void*)drivenMatrices);
-  MOpenCLInfo::checkCLErrorStatus(err);
+#else
+  err = EnqueueBuffer(drivenMatrices_, 16 * sizeof(float), (void*)drivenMatrices);
+#endif
   return MS::kSuccess;
 }
 
