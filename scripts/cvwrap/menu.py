@@ -65,7 +65,7 @@ def create_cvwrap(*args, **kwargs):
     if len(sel) >= 2:
         kwargs = get_create_command_kwargs()
         result = cmds.cvWrap(**kwargs)
-        print result
+        print(result)
     else:
         raise RuntimeError("Select at least one surface and one influence object.")
 

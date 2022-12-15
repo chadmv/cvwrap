@@ -115,5 +115,5 @@ class BindingDialog(MayaQWidgetBaseMixin, QtGui.QDialog):
         cmds.ConvertSelectionToVertices()
         cmds.select(faces, add=True)
         cmds.cvWrap(rb=wrap_node, radius=radius)
-        print 'Rebounded vertices'
+        print('Rebounded vertices')
 
